@@ -73,6 +73,7 @@ serve(async (req: Request) => {
         eventDateTime: event?.event_date_time,
         venue: event?.venue || 'Beyond Temptation, Ashegaon Road, Basmat',
         fullName: booking.full_name,
+        attendeeName: booking.full_name,
         mobile: booking.mobile,
         email: booking.email,
         ticketType: booking.ticket_type,

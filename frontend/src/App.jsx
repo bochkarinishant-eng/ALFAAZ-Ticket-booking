@@ -1046,7 +1046,7 @@ export default function App() {
                 {/* Left column details */}
                 <div className="ticket-details-col">
                   <div className="attendee-title">ATTENDEE NAME</div>
-                  <div className="attendee-name">{confirmedTicket.attendeeName}</div>
+                  <div className="attendee-name">{confirmedTicket.attendeeName || confirmedTicket.fullName}</div>
 
                   <div className="ticket-meta-grid">
                     <div className="ticket-meta-item">
