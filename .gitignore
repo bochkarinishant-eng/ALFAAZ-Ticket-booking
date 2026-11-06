@@ -1,0 +1,26 @@
+# Build & Dependency Artifacts
+.tools/
+backend/target/
+frontend/node_modules/
+frontend/dist/
+*.log
+
+# Environment & Secret overrides
+.env
+.env.local
+.env.*.local
+
+# IDE & Editor files
+.idea/
+.vscode/
+*.iml
+*.iws
+*.ipr
+.project
+.classpath
+.settings/
+
+# Operating System files
+.DS_Store
+Thumbs.db
+desktop.ini

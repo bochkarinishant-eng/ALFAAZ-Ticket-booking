@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400">
+  <rect width="400" height="400" fill="#FDFBF7" rx="20"/>
+  <rect x="16" y="16" width="368" height="368" fill="none" stroke="#4A1521" stroke-width="3" rx="14" stroke-dasharray="8 6"/>
+  
+  <!-- Header Banner -->
+  <rect x="36" y="32" width="328" height="48" rx="8" fill="#4A1521"/>
+  <text x="200" y="62" fill="#FDFBF7" font-family="Georgia, serif" font-size="20" font-weight="bold" text-anchor="middle" letter-spacing="2">ALFAAZ OPEN MIC</text>
+  
+  <!-- QR Frame simulation -->
+  <rect x="70" y="100" width="260" height="200" fill="#FFFFFF" rx="12" stroke="#E2D9CC" stroke-width="2"/>
+  
+  <!-- Corner QR alignment markers -->
+  <rect x="86" y="116" width="44" height="44" fill="#4A1521" rx="4"/>
+  <rect x="94" y="124" width="28" height="28" fill="#FFFFFF" rx="2"/>
+  <rect x="100" y="130" width="16" height="16" fill="#4A1521" rx="1"/>
+  
+  <rect x="270" y="116" width="44" height="44" fill="#4A1521" rx="4"/>
+  <rect x="278" y="124" width="28" height="28" fill="#FFFFFF" rx="2"/>
+  <rect x="284" y="130" width="16" height="16" fill="#4A1521" rx="1"/>
+
+  <rect x="86" y="240" width="44" height="44" fill="#4A1521" rx="4"/>
+  <rect x="94" y="248" width="28" height="28" fill="#FFFFFF" rx="2"/>
+  <rect x="100" y="254" width="16" height="16" fill="#4A1521" rx="1"/>
+
+  <!-- QR decorative pattern dots -->
+  <g fill="#4A1521" opacity="0.85">
+    <rect x="146" y="116" width="12" height="12"/>
+    <rect x="166" y="116" width="12" height="24"/>
+    <rect x="194" y="116" width="24" height="12"/>
+    <rect x="234" y="116" width="12" height="12"/>
+    <rect x="146" y="144" width="24" height="12"/>
+    <rect x="186" y="144" width="12" height="24"/>
+    <rect x="214" y="144" width="24" height="12"/>
+    <rect x="246" y="144" width="12" height="12"/>
+    
+    <!-- Center UPI badge -->
+    <circle cx="200" cy="200" r="26" fill="#B83A4B"/>
+    <text x="200" y="206" fill="#FFFFFF" font-family="Arial, sans-serif" font-size="14" font-weight="bold" text-anchor="middle">UPI</text>
+
+    <rect x="146" y="236" width="12" height="24"/>
+    <rect x="174" y="236" width="24" height="12"/>
+    <rect x="214" y="236" width="12" height="12"/>
+    <rect x="246" y="236" width="24" height="24"/>
+    <rect x="286" y="236" width="12" height="24"/>
+    <rect x="146" y="268" width="24" height="12"/>
+    <rect x="186" y="268" width="12" height="12"/>
+    <rect x="214" y="268" width="24" height="12"/>
+  </g>
+
+  <!-- UPI ID & Details -->
+  <rect x="40" y="318" width="320" height="36" rx="6" fill="#F4EDE2" stroke="#E0D5C1"/>
+  <text x="200" y="341" fill="#4A1521" font-family="monospace" font-size="14" font-weight="bold" text-anchor="middle">UPI ID: 8624890246@ibl</text>
+  
+  <text x="200" y="378" fill="#6E6464" font-family="system-ui, sans-serif" font-size="12" text-anchor="middle">Scan via GPay, PhonePe, Paytm, or any UPI app</text>
+</svg>
