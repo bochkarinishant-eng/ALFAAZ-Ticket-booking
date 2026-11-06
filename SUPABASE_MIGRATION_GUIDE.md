@@ -1,12 +1,10 @@
 # ALFAAZ Open Mic — Supabase Serverless Backend Guide
 
-This project has been completely migrated from a legacy Spring Boot + MySQL architecture to a **100% Free & Serverless Stack**:
+This project runs on a **100% Free & Serverless Stack**:
 - **Database:** Supabase PostgreSQL with Row Level Security (RLS) & Atomic Stored Procedures.
 - **Backend APIs:** Supabase Edge Functions (TypeScript on Deno runtime).
 - **Authentication:** Supabase Auth for Admin management.
-- **Payment Processing:** Dual-mode:
-  1. Automated Razorpay Checkout (Cards, UPI, Netbanking) with HMAC SHA-256 signature verification.
-  2. Fallback manual UPI QR scan with 12-digit UTR submission.
+- **Payment Processing:** 100% Direct UPI QR scan with 12-digit UTR submission (Zero gateway fees, zero third-party payment accounts).
 - **Frontend Hosting:** Vercel (100% Free Tier, Global CDN).
 - **QR Ticket & Door Entry:** Cryptographic QR tokens, single-entry validation lock, instant PNG download, and browser printing.
 
@@ -65,18 +63,10 @@ Link your local repository to your Supabase project (replace `<project-ref>` wit
 ```bash
 supabase link --project-ref <project-ref>
 ```
-Set your Razorpay secrets in Supabase:
-```bash
-supabase secrets set RAZORPAY_KEY_ID="rzp_live_xxxxxxxxxx"
-supabase secrets set RAZORPAY_KEY_SECRET="your_razorpay_secret"
-supabase secrets set RAZORPAY_WEBHOOK_SECRET="your_webhook_secret"
-```
-Deploy all 8 Edge Functions:
+Deploy all 6 Edge Functions:
 ```bash
 supabase functions deploy create-booking
-supabase functions deploy create-payment-order
 supabase functions deploy verify-payment
-supabase functions deploy razorpay-webhook
 supabase functions deploy get-booking
 supabase functions deploy get-ticket
 supabase functions deploy validate-ticket
@@ -85,25 +75,12 @@ supabase functions deploy admin-management
 
 ---
 
-### Step 5: Configure Razorpay Webhook (Optional but Recommended)
-1. Go to your [Razorpay Dashboard](https://dashboard.razorpay.com/) -> **Settings** -> **Webhooks**.
-2. Click **Add New Webhook**.
-3. **Webhook URL:** `https://<your-project-ref>.supabase.co/functions/v1/razorpay-webhook`
-4. **Secret:** Same value you set in `RAZORPAY_WEBHOOK_SECRET`.
-5. **Active Events:**
-   - `payment.captured`
-   - `order.paid`
-   - `payment.failed`
-6. Click **Save Webhook**.
-
----
-
 ## 2. Frontend Deployment on Vercel (100% Free)
 
 1. Push your repository to GitHub:
    ```bash
    git add .
-   git commit -m "Complete migration to Supabase serverless stack"
+   git commit -m "Pure serverless UPI payment & ticket booking system"
    git push origin main
    ```
 2. Go to [https://vercel.com](https://vercel.com) and click **Add New** -> **Project**.
@@ -114,19 +91,14 @@ supabase functions deploy admin-management
    | :--- | :--- | :--- |
    | `VITE_SUPABASE_URL` | `https://<your-project-ref>.supabase.co` | Supabase Project URL |
    | `VITE_SUPABASE_ANON_KEY` | `eyJhbGciOiJIUzI1NiIsInR5cCI6...` | Supabase Anonymous Key |
-   | `VITE_RAZORPAY_KEY_ID` | `rzp_live_xxxxxxxxxx` | Razorpay Key ID |
 6. Click **Deploy**. Your app is live within seconds on a fast global CDN!
 
 ---
 
-## 3. Architecture Comparison
+## 3. How the UPI Payment & Ticket Flow Works
 
-| Feature | Old Architecture | New Serverless Architecture |
-| :--- | :--- | :--- |
-| **Backend Runtime** | Java / Spring Boot 3 / Render Web Service | Supabase Edge Functions (Deno TypeScript) |
-| **Database** | MySQL on Render / Remote MySQL | Supabase PostgreSQL with RLS |
-| **Cost** | Render sleeps / MySQL limits on free tier | 100% Free Tier (Postgres + Edge Functions) |
-| **Build Issues** | Failed on `JAVA_HOME` / Docker config | Zero container configs; instant Vercel build |
-| **Capacity & Scalability** | Limited JVM thread pool | Scales automatically to handle traffic spikes |
-| **Payments** | Manual UPI UTR only | Dual: Razorpay instant checkout + Manual UPI |
-| **Ticket Security** | Basic database check | Row-level `FOR UPDATE` lock preventing double-entry |
+1. **Seat Reservation:** Customer enters their Name and 10-digit Phone number. A seat is temporarily reserved for 15 minutes.
+2. **UPI QR Scan:** Customer is shown the Alfaaz UPI QR code and UPI ID (`8624890246@ibl`). They pay ₹100 via GPay, PhonePe, Paytm, or BHIM.
+3. **UTR Submission:** Customer enters their 12-digit UPI Reference / UTR Number and clicks "Payment Completed · Submit UTR".
+4. **Admin Approval:** Admin opens the Admin Dashboard, verifies the UTR against their UPI statement, and clicks **Approve**.
+5. **Instant Ticket:** The customer's screen flips to their verified **Digital QR Entry Pass**, complete with a single-entry QR code, PDF download, and WhatsApp share link!

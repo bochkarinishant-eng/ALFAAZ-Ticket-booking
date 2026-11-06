@@ -129,7 +129,7 @@ serve(async (req: Request) => {
       booking_id: booking.id,
       amount: amount,
       currency: 'INR',
-      payment_method: 'RAZORPAY',
+      payment_method: 'UPI',
       status: 'PENDING',
     });
 

@@ -5,9 +5,7 @@ A production-ready full-stack event ticketing, payment verification, and door QR
 - **Backend APIs:** Supabase Edge Functions (TypeScript / Deno runtime).
 - **Database:** Supabase PostgreSQL with Row Level Security (RLS) & Atomic Stored Procedures.
 - **Authentication:** Supabase Auth for Admin management.
-- **Payment Processing:** Dual-mode:
-  1. Automated Razorpay Checkout (Cards, UPI, Netbanking) with HMAC SHA-256 signature verification.
-  2. Fallback manual UPI QR scan with 12-digit UTR submission.
+- **Payment Processing:** 100% Direct UPI QR scan with 12-digit UTR submission (Zero gateway fees, zero third-party payment accounts).
 - **Hosting:** Vercel (Frontend) + Supabase (Database & APIs).
 
 ---
@@ -46,9 +44,7 @@ alfaz/
 │   │   └── 20261107000003_database_functions.sql
 │   ├── functions/              # Deno Edge Functions
 │   │   ├── create-booking/
-│   │   ├── create-payment-order/
 │   │   ├── verify-payment/
-│   │   ├── razorpay-webhook/
 │   │   ├── get-booking/
 │   │   ├── get-ticket/
 │   │   ├── validate-ticket/

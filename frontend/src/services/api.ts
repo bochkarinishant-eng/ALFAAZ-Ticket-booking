@@ -197,36 +197,7 @@ export async function reserveSeat(params: {
   return data;
 }
 
-// 3. Create Razorpay Payment Order
-export async function createPaymentOrder(bookingReference: string) {
-  const res = await fetch(`${FUNCTIONS_BASE}/create-payment-order`, {
-    method: 'POST',
-    headers: getHeaders(),
-    body: JSON.stringify({ bookingReference }),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Failed to create payment order');
-  return data;
-}
-
-// 4. Verify Razorpay Payment Signature
-export async function verifyPayment(params: {
-  bookingReference: string;
-  razorpay_order_id: string;
-  razorpay_payment_id: string;
-  razorpay_signature: string;
-}) {
-  const res = await fetch(`${FUNCTIONS_BASE}/verify-payment`, {
-    method: 'POST',
-    headers: getHeaders(),
-    body: JSON.stringify(params),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Payment signature verification failed');
-  return data;
-}
-
-// 5. Submit Manual UPI Reference (UTR)
+// 3. Submit UPI Reference (UTR)
 export async function submitPaymentUtr(bookingReference: string, utrNumber: string) {
   const res = await fetch(`${FUNCTIONS_BASE}/verify-payment`, {
     method: 'POST',

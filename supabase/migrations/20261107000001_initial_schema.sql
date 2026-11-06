@@ -70,12 +70,9 @@ CREATE TABLE IF NOT EXISTS public.bookings (
 CREATE TABLE IF NOT EXISTS public.payments (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   booking_id UUID NOT NULL REFERENCES public.bookings(id) ON DELETE CASCADE UNIQUE,
-  razorpay_order_id TEXT,
-  razorpay_payment_id TEXT UNIQUE,
-  razorpay_signature TEXT,
   amount NUMERIC(10, 2) NOT NULL DEFAULT 100.00,
   currency TEXT NOT NULL DEFAULT 'INR',
-  payment_method TEXT NOT NULL DEFAULT 'RAZORPAY',
+  payment_method TEXT NOT NULL DEFAULT 'UPI',
   utr_number TEXT,
   status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'SUBMITTED', 'VERIFIED', 'FAILED', 'REJECTED', 'REFUNDED', 'EXPIRED')),
   rejection_reason TEXT,
@@ -131,7 +128,6 @@ CREATE INDEX IF NOT EXISTS idx_bookings_access_key ON public.bookings(access_key
 CREATE INDEX IF NOT EXISTS idx_bookings_event ON public.bookings(event_id);
 CREATE INDEX IF NOT EXISTS idx_payments_booking ON public.payments(booking_id);
 CREATE INDEX IF NOT EXISTS idx_payments_status ON public.payments(status);
-CREATE INDEX IF NOT EXISTS idx_payments_order_id ON public.payments(razorpay_order_id);
 CREATE INDEX IF NOT EXISTS idx_payments_utr ON public.payments(utr_number);
 CREATE INDEX IF NOT EXISTS idx_tickets_token ON public.tickets(qr_token);
 CREATE INDEX IF NOT EXISTS idx_tickets_number ON public.tickets(ticket_number);
