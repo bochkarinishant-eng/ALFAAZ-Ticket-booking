@@ -1,11 +1,11 @@
-# Build & Dependency Artifacts
-.tools/
-backend/target/
+# Frontend Dependencies & Build Artifacts
 frontend/node_modules/
 frontend/dist/
 *.log
 
-# Environment & Secret overrides
+# Supabase Local Overrides & Secrets
+supabase/.env
+supabase/.temp/
 .env
 .env.local
 .env.*.local
@@ -16,9 +16,6 @@ frontend/dist/
 *.iml
 *.iws
 *.ipr
-.project
-.classpath
-.settings/
 
 # Operating System files
 .DS_Store
