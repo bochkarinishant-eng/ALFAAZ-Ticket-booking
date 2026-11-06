@@ -1,12 +1,23 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
+import QRCode from 'qrcode';
+import * as api from './services/api';
 
-const API_BASE = 'http://localhost:8080/api';
+function loadRazorpayScript() {
+  return new Promise((resolve) => {
+    if (window.Razorpay) return resolve(true);
+    const script = document.createElement('script');
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    script.onload = () => resolve(true);
+    script.onerror = () => resolve(false);
+    document.body.appendChild(script);
+  });
+}
 
 export default function App() {
   const [page, setPage] = useState('home'); // home, book, payment, confirmation, myticket, admin
   const [event, setEvent] = useState({
-    id: 1,
+    id: 'e1fa0000-0000-0000-0000-000000000001',
     title: 'Alfaaz Open Mic',
     organizer: 'Alfaaz',
     eventDateTime: '2026-11-09T17:00:00',
@@ -43,8 +54,10 @@ export default function App() {
   const [utrNumber, setUtrNumber] = useState('');
   const [isReserving, setIsReserving] = useState(false);
   const [isSubmittingUtr, setIsSubmittingUtr] = useState(false);
+  const [isRazorpayPaying, setIsRazorpayPaying] = useState(false);
   const [isPaymentSubmitted, setIsPaymentSubmitted] = useState(false);
   const [confirmedTicket, setConfirmedTicket] = useState(null);
+  const [qrDataUrl, setQrDataUrl] = useState('');
   const [lookupQuery, setLookupQuery] = useState('');
   const [lookupLoading, setLookupLoading] = useState(false);
   const [lookupError, setLookupError] = useState('');
@@ -78,9 +91,8 @@ export default function App() {
   // 1. Initial Load: Fetch event & inspect URL parameters
   async function loadEventDetails() {
     try {
-      const res = await fetch(`${API_BASE}/events/active`);
-      if (res.ok) {
-        const data = await res.json();
+      const data = await api.getActiveEvent();
+      if (data) {
         setEvent(data);
       }
     } catch {
@@ -118,20 +130,33 @@ export default function App() {
     }
   }, []);
 
+  // Generate QR code data URL whenever confirmed ticket changes
+  useEffect(() => {
+    if (confirmedTicket) {
+      const token = confirmedTicket.qrToken || confirmedTicket.accessKey;
+      if (token) {
+        QRCode.toDataURL(token, {
+          width: 320,
+          margin: 2,
+          color: { dark: '#4A1422', light: '#FFFFFF' }
+        })
+          .then(url => setQrDataUrl(url))
+          .catch(() => {});
+      } else if (confirmedTicket.qrBase64) {
+        setQrDataUrl(`data:image/png;base64,${confirmedTicket.qrBase64}`);
+      }
+    }
+  }, [confirmedTicket]);
+
   // Load ticket by access key
   async function loadTicketByAccessKey(key) {
     try {
-      const res = await fetch(`${API_BASE}/tickets/access/${key.trim()}`);
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.message || 'Ticket not found or unconfirmed');
-      }
-      const data = await res.json();
+      const data = await api.getConfirmedTicket(key.trim());
       setConfirmedTicket(data);
       setPage('confirmation');
       window.scrollTo(0, 0);
     } catch (err) {
-      showNotice(err.message, 'error');
+      showNotice(err.message || 'Ticket not found or unconfirmed', 'error');
     }
   }
 
@@ -152,7 +177,6 @@ export default function App() {
     try {
       const ticketType = bookingForm.isPerformer ? 'Performer' : 'Audience';
       const payload = {
-        eventId: event.id,
         fullName: bookingForm.fullName.trim(),
         mobile: bookingForm.mobile.trim(),
         ticketType: ticketType,
@@ -160,16 +184,7 @@ export default function App() {
         performanceDescription: bookingForm.isPerformer ? bookingForm.performanceDescription : null
       };
 
-      const res = await fetch(`${API_BASE}/bookings/reserve`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.message || 'Could not reserve seat');
-      }
+      const data = await api.reserveSeat(payload);
 
       setBookingReserve(data);
       setIsPaymentSubmitted(false);
@@ -178,13 +193,72 @@ export default function App() {
       window.scrollTo(0, 0);
       loadEventDetails();
     } catch (err) {
-      showNotice(err.message, 'error');
+      showNotice(err.message || 'Could not reserve seat', 'error');
     } finally {
       setIsReserving(false);
     }
   }
 
-  // 3. Booking Step 2: Submit UTR
+  // 3. Booking Step 2A: Online Razorpay Payment
+  async function handleRazorpayPayment() {
+    if (!bookingReserve) return;
+    setIsRazorpayPaying(true);
+    try {
+      const order = await api.createPaymentOrder(bookingReserve.bookingReference);
+      const scriptLoaded = await loadRazorpayScript();
+      if (!scriptLoaded) {
+        throw new Error('Razorpay Checkout failed to load. Please check your internet connection or use UPI UTR below.');
+      }
+
+      const options = {
+        key: order.keyId || import.meta.env.VITE_RAZORPAY_KEY_ID,
+        amount: order.amount,
+        currency: order.currency || 'INR',
+        name: 'Alfaaz Open Mic',
+        description: `₹100 Entry Ticket - ${bookingReserve.ticketType} Pass`,
+        order_id: order.orderId,
+        prefill: {
+          name: order.customerName,
+          email: order.customerEmail,
+          contact: order.customerPhone,
+        },
+        theme: {
+          color: '#4A1422',
+        },
+        handler: async function (response) {
+          try {
+            showNotice('Verifying payment signature with server...', 'info');
+            const verifyRes = await api.verifyPayment({
+              bookingReference: bookingReserve.bookingReference,
+              razorpay_order_id: response.razorpay_order_id,
+              razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_signature: response.razorpay_signature,
+            });
+            if (verifyRes.accessKey) {
+              await loadTicketByAccessKey(verifyRes.accessKey);
+              showNotice('Payment confirmed! Ticket issued.', 'success');
+            }
+          } catch (err) {
+            showNotice(err.message || 'Payment verification failed', 'error');
+          }
+        },
+        modal: {
+          ondismiss: function () {
+            showNotice('Payment window closed. You can try again or submit UTR below.', 'info');
+          }
+        }
+      };
+
+      const rzp = new window.Razorpay(options);
+      rzp.open();
+    } catch (err) {
+      showNotice(err.message || 'Online payment initialization failed. You can scan UPI QR below.', 'error');
+    } finally {
+      setIsRazorpayPaying(false);
+    }
+  }
+
+  // 3. Booking Step 2B: Submit UPI UTR
   async function handleSubmitUtr(e) {
     e.preventDefault();
     if (!utrNumber.trim() || utrNumber.trim().length < 6) {
@@ -194,20 +268,11 @@ export default function App() {
 
     setIsSubmittingUtr(true);
     try {
-      const res = await fetch(`${API_BASE}/bookings/${bookingReserve.bookingReference}/submit-payment`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ utrNumber: utrNumber.trim() })
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.message || 'Could not submit payment reference');
-      }
-
+      await api.submitPaymentUtr(bookingReserve.bookingReference, utrNumber.trim());
       setIsPaymentSubmitted(true);
       showNotice('Payment reference submitted! Verification in progress.', 'success');
     } catch (err) {
-      showNotice(err.message, 'error');
+      showNotice(err.message || 'Could not submit payment reference', 'error');
     } finally {
       setIsSubmittingUtr(false);
     }
@@ -219,13 +284,10 @@ export default function App() {
 
     const interval = setInterval(async () => {
       try {
-        const res = await fetch(`${API_BASE}/bookings/${bookingReserve.bookingReference}/status`);
-        if (res.ok) {
-          const status = await res.json();
-          if (status.bookingStatus === 'CONFIRMED' || status.paymentStatus === 'VERIFIED') {
-            clearInterval(interval);
-            loadTicketByAccessKey(bookingReserve.accessKey);
-          }
+        const status = await api.getBookingStatus(bookingReserve.bookingReference);
+        if (status.bookingStatus === 'CONFIRMED' || status.paymentStatus === 'VERIFIED') {
+          clearInterval(interval);
+          loadTicketByAccessKey(bookingReserve.accessKey);
         }
       } catch {
         // Polling retry
@@ -242,7 +304,6 @@ export default function App() {
     if (!q) return;
 
     setLookupLoading(true);
-    // If direct link pasted:
     if (q.startsWith('http') && q.includes('ticket=')) {
       const match = q.match(/ticket=([a-zA-Z0-9]+)/);
       if (match) {
@@ -253,31 +314,27 @@ export default function App() {
     }
 
     try {
-      const res = await fetch(`${API_BASE}/bookings/${encodeURIComponent(q)}/status`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.bookingStatus === 'CONFIRMED') {
-          await loadTicketByAccessKey(data.accessKey);
-          return;
-        } else {
-          setBookingReserve({
-            bookingReference: data.bookingReference,
-            accessKey: data.accessKey,
-            amount: data.amount,
-            ticketType: data.ticketType,
-            reservedUntil: data.reservedUntil,
-            upiId: event.upiId,
-            contactPhone: event.contactPhone
-          });
-          setIsPaymentSubmitted(data.paymentStatus === 'SUBMITTED');
-          setPage('payment');
-          window.scrollTo(0, 0);
-          return;
-        }
+      const data = await api.getBookingStatus(q);
+      if (data.bookingStatus === 'CONFIRMED') {
+        await loadTicketByAccessKey(data.accessKey);
+        return;
+      } else {
+        setBookingReserve({
+          bookingReference: data.bookingReference,
+          accessKey: data.accessKey,
+          amount: data.amount,
+          ticketType: data.ticketType,
+          reservedUntil: data.reservedUntil,
+          upiId: event.upiId,
+          contactPhone: event.contactPhone
+        });
+        setIsPaymentSubmitted(data.paymentStatus === 'SUBMITTED');
+        setPage('payment');
+        window.scrollTo(0, 0);
+        return;
       }
-      throw new Error('No booking found for this mobile number or reference. Please check and try again.');
     } catch (err) {
-      setLookupError(err.message);
+      setLookupError(err.message || 'No booking found for this mobile number or reference. Please check and try again.');
     } finally {
       setLookupLoading(false);
     }
@@ -285,14 +342,13 @@ export default function App() {
 
   // 4. Ticket Actions: PDF, QR, Print, WhatsApp, Copy Link
   function downloadPdf() {
-    if (!confirmedTicket) return;
-    window.open(`${API_BASE}/tickets/${confirmedTicket.accessKey}/pdf`, '_blank');
+    window.print();
   }
 
   function downloadQrPng() {
     if (!confirmedTicket) return;
     const link = document.createElement('a');
-    link.href = `${API_BASE}/tickets/${confirmedTicket.accessKey}/qr`;
+    link.href = qrDataUrl || `data:image/png;base64,${confirmedTicket.qrBase64 || ''}`;
     link.download = `Alfaaz-Ticket-${confirmedTicket.ticketNumber}-QR.png`;
     document.body.appendChild(link);
     link.click();
@@ -315,9 +371,10 @@ export default function App() {
   function shareTicketOnWhatsApp() {
     if (!confirmedTicket) return;
     const url = `${window.location.origin}/?ticket=${confirmedTicket.accessKey}`;
+    const attendeeName = confirmedTicket.fullName || confirmedTicket.attendeeName || 'Guest';
     const text = encodeURIComponent(
       `🎙️ *Alfaaz Open Mic Ticket Confirmed!*\n\n` +
-      `👤 Attendee: ${confirmedTicket.attendeeName}\n` +
+      `👤 Attendee: ${attendeeName}\n` +
       `🎟️ Ticket ID: ${confirmedTicket.ticketNumber}\n` +
       `📅 Date: Monday, 9 November 2026 at 5:00 PM\n` +
       `📍 Venue: Beyond Temptation, Ashegaon Road, Basmat\n\n` +
@@ -350,18 +407,13 @@ export default function App() {
             if (isStopped) return;
             await scanner.pause(true);
             try {
-              const res = await fetch(`${API_BASE}/check-in`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ token: decodedText.trim() })
-              });
-              const result = await res.json();
+              const result = await api.checkInTicket(decodedText.trim());
               setScanResult(result);
             } catch (err) {
               setScanResult({
-                accepted: false,
-                result: 'NETWORK_ERROR',
-                message: 'Failed to verify ticket with backend.'
+                success: false,
+                status: 'NETWORK_ERROR',
+                message: err.message || 'Failed to verify ticket with backend.'
               });
             }
           },
@@ -399,30 +451,17 @@ export default function App() {
     e.preventDefault();
     setAdminLoginError('');
     try {
-      const res = await fetch(`${API_BASE}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: adminUsername.trim(), password: adminPassword })
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.message || 'Invalid username or password');
-      }
+      const data = await api.adminLogin(adminUsername.trim(), adminPassword);
       setAdminToken(data.token);
       sessionStorage.setItem('alfaaz_admin_token', data.token);
       loadAdminDashboard(data.token);
     } catch (err) {
-      setAdminLoginError(err.message);
+      setAdminLoginError(err.message || 'Invalid username or password');
     }
   }
 
   function handleAdminLogout() {
-    if (adminToken) {
-      fetch(`${API_BASE}/auth/logout`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${adminToken}` }
-      }).catch(() => {});
-    }
+    api.adminLogout().catch(() => {});
     setAdminToken('');
     sessionStorage.removeItem('alfaaz_admin_token');
   }
@@ -430,19 +469,16 @@ export default function App() {
   async function loadAdminDashboard(token = adminToken) {
     if (!token) return;
     try {
-      const headers = { Authorization: `Bearer ${token}` };
-      const [statsRes, bookingsRes] = await Promise.all([
-        fetch(`${API_BASE}/admin/stats`, { headers }),
-        fetch(`${API_BASE}/admin/bookings`, { headers })
+      const [stats, bookings] = await Promise.all([
+        api.getAdminStats(token),
+        api.getAdminBookings(token)
       ]);
-      if (statsRes.status === 403 || statsRes.status === 401) {
+      if (stats) setAdminStats(stats);
+      if (bookings) setAdminBookings(bookings);
+    } catch (err) {
+      if (err.message && (err.message.includes('403') || err.message.includes('401') || err.message.includes('denied'))) {
         handleAdminLogout();
-        return;
       }
-      if (statsRes.ok) setAdminStats(await statsRes.json());
-      if (bookingsRes.ok) setAdminBookings(await bookingsRes.json());
-    } catch {
-      // Dashboard refresh
     }
   }
 
@@ -456,19 +492,12 @@ export default function App() {
 
   async function handleApprovePayment(paymentId) {
     try {
-      const res = await fetch(`${API_BASE}/admin/payments/${paymentId}/approve`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${adminToken}` }
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.message || 'Could not approve payment');
-      }
+      await api.adminApprovePayment(adminToken, paymentId);
       showNotice('Payment approved! Ticket confirmed & entry QR issued.', 'success');
       loadAdminDashboard();
       loadEventDetails();
     } catch (err) {
-      showNotice(err.message, 'error');
+      showNotice(err.message || 'Could not approve payment', 'error');
     }
   }
 
@@ -477,41 +506,41 @@ export default function App() {
     if (reason === null) return;
 
     try {
-      const res = await fetch(`${API_BASE}/admin/payments/${paymentId}/reject`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${adminToken}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ reason })
-      });
-      if (!res.ok) throw new Error('Could not reject payment');
+      await api.adminRejectPayment(adminToken, paymentId, reason);
       showNotice('Payment rejected and seat released.', 'info');
       loadAdminDashboard();
       loadEventDetails();
     } catch (err) {
-      showNotice(err.message, 'error');
+      showNotice(err.message || 'Could not reject payment', 'error');
     }
   }
 
   async function handleCancelTicket(ticketId) {
     if (!confirm('Are you sure you want to cancel this confirmed ticket? The seat will be released.')) return;
     try {
-      const res = await fetch(`${API_BASE}/admin/tickets/${ticketId}/cancel`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${adminToken}` }
-      });
-      if (!res.ok) throw new Error('Could not cancel ticket');
+      await api.adminCancelTicket(adminToken, ticketId, 'Admin cancelled');
       showNotice('Ticket cancelled and seat released.', 'info');
       loadAdminDashboard();
       loadEventDetails();
     } catch (err) {
-      showNotice(err.message, 'error');
+      showNotice(err.message || 'Could not cancel ticket', 'error');
     }
   }
 
-  function handleExportCsv() {
-    window.open(`${API_BASE}/admin/export-csv?token=${encodeURIComponent(adminToken)}`, '_blank');
+  async function handleExportCsv() {
+    try {
+      const blob = await api.adminExportCsv(adminToken);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'Alfaaz-Attendees.csv';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      showNotice(err.message || 'Failed to export CSV', 'error');
+    }
   }
 
   // Filtered admin bookings
@@ -1010,6 +1039,34 @@ export default function App() {
                 For Help Contact: <strong>+91 8624890246</strong>
               </div>
 
+              {/* Instant Razorpay Online Payment */}
+              {!isPaymentSubmitted && (
+                <div style={{ marginBottom: '24px' }}>
+                  <button
+                    type="button"
+                    onClick={handleRazorpayPayment}
+                    disabled={isRazorpayPaying}
+                    className="btn-primary"
+                    style={{
+                      width: '100%',
+                      justifyContent: 'center',
+                      background: 'linear-gradient(135deg, #4A1422 0%, #C53A50 100%)',
+                      padding: '16px 20px',
+                      fontSize: '15px',
+                      fontWeight: 700,
+                      boxShadow: '0 4px 14px rgba(74, 20, 34, 0.25)',
+                    }}
+                  >
+                    {isRazorpayPaying ? 'Opening Secure Checkout...' : '💳 Pay ₹100 Instantly via Razorpay (UPI / Cards / NetBanking)'}
+                  </button>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', margin: '20px 0 10px 0' }}>
+                    <div style={{ flex: 1, height: '1px', background: 'var(--cream-300)' }}></div>
+                    <span style={{ fontSize: '12px', color: 'var(--charcoal-500)', fontWeight: 600, letterSpacing: '1px' }}>OR PAY VIA UPI QR & ENTER UTR</span>
+                    <div style={{ flex: 1, height: '1px', background: 'var(--cream-300)' }}></div>
+                  </div>
+                </div>
+              )}
+
               {/* UTR Submission Form */}
               {!isPaymentSubmitted ? (
                 <form onSubmit={handleSubmitUtr} style={{ textAlign: 'left', background: 'var(--cream-100)', padding: '22px', borderRadius: 'var(--radius-md)', border: '1px solid var(--cream-300)' }}>
@@ -1134,7 +1191,7 @@ export default function App() {
                 <div className="ticket-qr-col">
                   <div className="qr-image-wrap">
                     <img
-                      src={`data:image/png;base64,${confirmedTicket.qrPngBase64}`}
+                      src={qrDataUrl || (confirmedTicket.qrBase64 ? `data:image/png;base64,${confirmedTicket.qrBase64}` : `data:image/png;base64,${confirmedTicket.qrPngBase64}`)}
                       alt="Unique Entry QR Code"
                     />
                   </div>
