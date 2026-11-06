@@ -13,7 +13,7 @@ shadow_port = 54320
 [studio]
 port = 54323
 
-[inbucket]
+[local_smtp]
 port = 54324
 
 [storage]
