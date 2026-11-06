@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS `events` (
   `organizer` VARCHAR(255) NOT NULL,
   `event_date_time` DATETIME(6) NOT NULL,
   `venue` VARCHAR(255) NOT NULL,
-  `max_capacity` INT NOT NULL DEFAULT 40,
+  `max_capacity` INT NOT NULL DEFAULT 99999,
   `audience_price` DOUBLE NOT NULL DEFAULT 100.0,
   `performer_price` DOUBLE NOT NULL DEFAULT 100.0,
   `contact_phone` VARCHAR(255) NOT NULL DEFAULT '8624890246',
@@ -128,7 +128,7 @@ INSERT INTO `events` (
   `id`, `title`, `organizer`, `event_date_time`, `venue`, 
   `max_capacity`, `audience_price`, `performer_price`, `contact_phone`, `upi_id`, `active`
 )
-SELECT 1, 'Alfaaz Open Mic', 'Alfaaz', '2026-11-09 17:00:00.000000', 'Beyond Temptation, Ashegaon Road, Basmat', 40, 100.0, 100.0, '8624890246', '8624890246@ibl', b'1'
+SELECT 1, 'Alfaaz Open Mic', 'Alfaaz', '2026-11-09 17:00:00.000000', 'Beyond Temptation, Ashegaon Road, Basmat', 99999, 100.0, 100.0, '8624890246', '8624890246@ibl', b'1'
 FROM DUAL
 WHERE NOT EXISTS (SELECT 1 FROM `events` WHERE `id` = 1);
 
@@ -138,7 +138,7 @@ SET `title` = 'Alfaaz Open Mic',
     `organizer` = 'Alfaaz',
     `event_date_time` = '2026-11-09 17:00:00.000000',
     `venue` = 'Beyond Temptation, Ashegaon Road, Basmat',
-    `max_capacity` = 40,
+    `max_capacity` = 99999,
     `audience_price` = 100.0,
     `performer_price` = 100.0,
     `contact_phone` = '8624890246',

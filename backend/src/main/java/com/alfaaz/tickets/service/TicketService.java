@@ -417,7 +417,8 @@ public class TicketService {
         Event event = getActiveEvent();
         long confirmed = bookingRepository.countByEventIdAndStatus(event.getId(), "CONFIRMED");
         long activeReservations = bookingRepository.countActivePendingReservations(event.getId(), LocalDateTime.now());
-        long remaining = Math.max(0, event.getMaxCapacity() - confirmed);
+        long displayCapacity = 40;
+        long remaining = Math.max(0, displayCapacity - confirmed);
 
         long audience = bookingRepository.countByEventIdAndTicketTypeAndStatus(event.getId(), "Audience", "CONFIRMED");
         long performers = bookingRepository.countByEventIdAndTicketTypeAndStatus(event.getId(), "Performer", "CONFIRMED");
@@ -428,7 +429,7 @@ public class TicketService {
         long checkedIn = ticketRepository.countByEventIdAndAttendedTrue(event.getId());
 
         return new AdminStatsResponse(
-            event.getMaxCapacity(),
+            (int) displayCapacity,
             confirmed,
             remaining,
             activeReservations,

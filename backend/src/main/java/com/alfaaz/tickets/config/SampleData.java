@@ -24,7 +24,7 @@ public class SampleData {
                     "Beyond Temptation, Ashegaon Road, Basmat"
                 );
                 ev.setOrganizer("Alfaaz");
-                ev.setMaxCapacity(40);
+                ev.setMaxCapacity(99999);
                 ev.setAudiencePrice(100.0);
                 ev.setPerformerPrice(100.0);
                 ev.setContactPhone("8624890246");
@@ -36,7 +36,7 @@ public class SampleData {
                 ev.setOrganizer("Alfaaz");
                 ev.setEventDateTime(LocalDateTime.of(2026, 11, 9, 17, 0));
                 ev.setVenue("Beyond Temptation, Ashegaon Road, Basmat");
-                ev.setMaxCapacity(40);
+                ev.setMaxCapacity(99999);
                 ev.setAudiencePrice(100.0);
                 ev.setPerformerPrice(100.0);
                 ev.setContactPhone("8624890246");

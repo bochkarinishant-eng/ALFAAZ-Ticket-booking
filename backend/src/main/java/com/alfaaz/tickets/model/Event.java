@@ -23,7 +23,7 @@ public class Event {
     private String venue;
 
     @Column(nullable = false)
-    private int maxCapacity = 40;
+    private int maxCapacity = 99999;
 
     @Column(nullable = false)
     private double audiencePrice = 100.0;
@@ -47,7 +47,7 @@ public class Event {
         this.eventDateTime = eventDateTime;
         this.venue = venue;
         this.organizer = "Alfaaz";
-        this.maxCapacity = 40;
+        this.maxCapacity = 99999;
         this.audiencePrice = 100.0;
         this.performerPrice = 100.0;
         this.contactPhone = "8624890246";
