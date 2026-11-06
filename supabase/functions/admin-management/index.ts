@@ -197,13 +197,23 @@ serve(async (req: Request) => {
       const body = await req.json();
       const { paymentId } = body;
 
-      const { data: payment, error: pErr } = await supabase
+      // Look up by payment ID or by booking ID
+      let { data: payment } = await supabase
         .from('payments')
         .select('*, booking:bookings(*)')
         .eq('id', paymentId)
-        .single();
+        .maybeSingle();
 
-      if (pErr || !payment) {
+      if (!payment) {
+        const res = await supabase
+          .from('payments')
+          .select('*, booking:bookings(*)')
+          .eq('booking_id', paymentId)
+          .maybeSingle();
+        payment = res.data;
+      }
+
+      if (!payment) {
         return new Response(JSON.stringify({ error: 'Payment not found' }), {
           status: 404,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -282,11 +292,20 @@ serve(async (req: Request) => {
       const body = await req.json();
       const { paymentId, reason } = body;
 
-      const { data: payment } = await supabase
+      let { data: payment } = await supabase
         .from('payments')
         .select('*, booking:bookings(*)')
         .eq('id', paymentId)
-        .single();
+        .maybeSingle();
+
+      if (!payment) {
+        const res = await supabase
+          .from('payments')
+          .select('*, booking:bookings(*)')
+          .eq('booking_id', paymentId)
+          .maybeSingle();
+        payment = res.data;
+      }
 
       if (!payment) {
         return new Response(JSON.stringify({ error: 'Payment not found' }), {
@@ -332,11 +351,20 @@ serve(async (req: Request) => {
       const body = await req.json();
       const { ticketId, reason } = body;
 
-      const { data: ticket } = await supabase
+      let { data: ticket } = await supabase
         .from('tickets')
         .select('*')
         .eq('id', ticketId)
-        .single();
+        .maybeSingle();
+
+      if (!ticket) {
+        const res = await supabase
+          .from('tickets')
+          .select('*')
+          .eq('booking_id', ticketId)
+          .maybeSingle();
+        ticket = res.data;
+      }
 
       if (!ticket) {
         return new Response(JSON.stringify({ error: 'Ticket not found' }), {

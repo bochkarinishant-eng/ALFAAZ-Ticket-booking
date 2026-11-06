@@ -1369,14 +1369,14 @@ export default function App() {
                                     <button
                                       className="btn-action primary-action"
                                       style={{ padding: '6px 12px', fontSize: '12px' }}
-                                      onClick={() => handleApprovePayment(b.id)}
+                                      onClick={() => handleApprovePayment(b.paymentId || b.id)}
                                     >
                                       ✓ Approve & Issue
                                     </button>
                                     <button
                                       className="btn-action"
                                       style={{ padding: '6px 12px', fontSize: '12px', color: '#dc2626' }}
-                                      onClick={() => handleRejectPayment(b.id)}
+                                      onClick={() => handleRejectPayment(b.paymentId || b.id)}
                                     >
                                       ✕ Reject
                                     </button>
@@ -1490,7 +1490,7 @@ export default function App() {
                                       <button
                                         className="btn-action"
                                         style={{ padding: '4px 10px', fontSize: '11px', color: '#dc2626' }}
-                                        onClick={() => handleCancelTicket(b.id)}
+                                        onClick={() => handleCancelTicket(b.ticketId || b.id)}
                                       >
                                         Cancel
                                       </button>
@@ -1500,7 +1500,7 @@ export default function App() {
                                     <button
                                       className="btn-action primary-action"
                                       style={{ padding: '4px 10px', fontSize: '11px' }}
-                                      onClick={() => handleApprovePayment(b.id)}
+                                      onClick={() => handleApprovePayment(b.paymentId || b.id)}
                                     >
                                       Approve
                                     </button>
