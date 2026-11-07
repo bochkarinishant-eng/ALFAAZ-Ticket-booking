@@ -250,6 +250,9 @@ export default function App() {
       };
 
       const rzp = new window.Razorpay(options);
+      rzp.on('payment.failed', function (response) {
+        showNotice(`Payment failed: ${response.error?.description || 'Transaction declined'}`, 'error');
+      });
       rzp.open();
     } catch (err) {
       showNotice(err.message || 'Online payment initialization failed. You can scan UPI QR below.', 'error');

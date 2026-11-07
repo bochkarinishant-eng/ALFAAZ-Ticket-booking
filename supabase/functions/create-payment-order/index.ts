@@ -56,6 +56,12 @@ serve(async (req: Request) => {
     }
 
     const amountInPaise = Math.round(Number(booking.amount) * 100);
+    if (amountInPaise < 100) {
+      return new Response(JSON.stringify({ error: 'Minimum transaction amount is 100 paise (₹1)' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
     // 2. Create Razorpay order
     const razorpayOrder = await createRazorpayOrder({
