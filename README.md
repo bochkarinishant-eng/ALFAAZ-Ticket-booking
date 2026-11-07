@@ -5,7 +5,9 @@ A production-ready full-stack event ticketing, payment verification, and door QR
 - **Backend APIs:** Supabase Edge Functions (TypeScript / Deno runtime).
 - **Database:** Supabase PostgreSQL with Row Level Security (RLS) & Atomic Stored Procedures.
 - **Authentication:** Supabase Auth for Admin management.
-- **Payment Processing:** 100% Direct UPI QR scan with 12-digit UTR submission (Zero gateway fees, zero third-party payment accounts).
+- **Payment Processing:** **Dual Payment Mode**:
+  1. Automated Razorpay Checkout (UPI, Google Pay, PhonePe, Cards, NetBanking) with HMAC SHA-256 verification.
+  2. Direct manual UPI QR code scan (`8624890246@ibl`) with 12-digit UTR submission.
 - **Hosting:** Vercel (Frontend) + Supabase (Database & APIs).
 
 ---
@@ -22,7 +24,7 @@ A production-ready full-stack event ticketing, payment verification, and door QR
 
 ---
 
-## 📁 Clean Repository Structure
+## 📁 Repository Structure
 
 ```
 alfaz/
@@ -30,21 +32,20 @@ alfaz/
 │   ├── src/
 │   │   ├── lib/supabase.ts     # Central Supabase client
 │   │   ├── services/api.ts     # Typed Serverless API client
-│   │   ├── App.jsx             # Main application UI & flows
+│   │   ├── App.jsx             # Main UI (Razorpay + UPI + QR Ticket)
 │   │   ├── styles.css          # Editorial luxury theme
 │   │   └── main.jsx
 │   ├── public/                 # Static assets (UPI QR code)
-│   ├── .env.example            # Vercel environment variables guide
+│   ├── .env.example            # Environment variables template
 │   └── package.json
 │
 ├── supabase/                   # Serverless Backend & Database
-│   ├── migrations/             # SQL Migrations (run in Supabase SQL editor)
-│   │   ├── 20261107000001_initial_schema.sql
-│   │   ├── 20261107000002_rls_policies.sql
-│   │   └── 20261107000003_database_functions.sql
+│   ├── migrations/             # PostgreSQL SQL schema migrations
 │   ├── functions/              # Deno Edge Functions
 │   │   ├── create-booking/
+│   │   ├── create-payment-order/
 │   │   ├── verify-payment/
+│   │   ├── razorpay-webhook/
 │   │   ├── get-booking/
 │   │   ├── get-ticket/
 │   │   ├── validate-ticket/
@@ -78,4 +79,4 @@ alfaz/
 
 ## 📖 Deployment Guide
 
-For full instructions on setting up Supabase, applying SQL migrations, creating the Admin account, and deploying to Vercel, please read [`SUPABASE_MIGRATION_GUIDE.md`](SUPABASE_MIGRATION_GUIDE.md).
+For full instructions on setting up Supabase, Razorpay API keys, Edge Functions, and deploying to Vercel, please read [`SUPABASE_MIGRATION_GUIDE.md`](SUPABASE_MIGRATION_GUIDE.md).

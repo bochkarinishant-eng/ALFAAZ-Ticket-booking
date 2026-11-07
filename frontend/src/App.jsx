@@ -3,6 +3,17 @@ import { Html5Qrcode } from 'html5-qrcode';
 import QRCode from 'qrcode';
 import * as api from './services/api';
 
+function loadRazorpayScript() {
+  return new Promise((resolve) => {
+    if (window.Razorpay) return resolve(true);
+    const script = document.createElement('script');
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    script.onload = () => resolve(true);
+    script.onerror = () => resolve(false);
+    document.body.appendChild(script);
+  });
+}
+
 export default function App() {
   const [page, setPage] = useState('home'); // home, book, payment, confirmation, myticket, admin
   const [event, setEvent] = useState({
@@ -43,6 +54,7 @@ export default function App() {
   const [utrNumber, setUtrNumber] = useState('');
   const [isReserving, setIsReserving] = useState(false);
   const [isSubmittingUtr, setIsSubmittingUtr] = useState(false);
+  const [isRazorpayPaying, setIsRazorpayPaying] = useState(false);
   const [isPaymentSubmitted, setIsPaymentSubmitted] = useState(false);
   const [confirmedTicket, setConfirmedTicket] = useState(null);
   const [qrDataUrl, setQrDataUrl] = useState('');
@@ -187,7 +199,66 @@ export default function App() {
     }
   }
 
-  // 3. Booking Step 2: Submit UPI UTR
+  // 3. Booking Step 2A: Online Razorpay Payment (Instant)
+  async function handleRazorpayPayment() {
+    if (!bookingReserve) return;
+    setIsRazorpayPaying(true);
+    try {
+      const order = await api.createPaymentOrder(bookingReserve.bookingReference);
+      const scriptLoaded = await loadRazorpayScript();
+      if (!scriptLoaded) {
+        throw new Error('Razorpay Checkout failed to load. Please check your internet connection or use UPI UTR below.');
+      }
+
+      const options = {
+        key: order.keyId || import.meta.env.VITE_RAZORPAY_KEY_ID,
+        amount: order.amount,
+        currency: order.currency || 'INR',
+        name: 'Alfaaz Open Mic',
+        description: `₹100 Entry Ticket - ${bookingReserve.ticketType} Pass`,
+        order_id: order.orderId,
+        prefill: {
+          name: order.customerName,
+          email: order.customerEmail,
+          contact: order.customerPhone,
+        },
+        theme: {
+          color: '#4A1422',
+        },
+        handler: async function (response) {
+          try {
+            showNotice('Payment received! Verifying cryptographic signature...', 'info');
+            const verifyRes = await api.verifyPayment({
+              bookingReference: bookingReserve.bookingReference,
+              razorpay_order_id: response.razorpay_order_id,
+              razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_signature: response.razorpay_signature,
+            });
+            if (verifyRes.accessKey) {
+              await loadTicketByAccessKey(verifyRes.accessKey);
+              showNotice('Payment verified! Your ticket is confirmed.', 'success');
+            }
+          } catch (err) {
+            showNotice(err.message || 'Payment verification failed', 'error');
+          }
+        },
+        modal: {
+          ondismiss: function () {
+            showNotice('Payment window closed. You can try again or submit UTR below.', 'info');
+          }
+        }
+      };
+
+      const rzp = new window.Razorpay(options);
+      rzp.open();
+    } catch (err) {
+      showNotice(err.message || 'Online payment initialization failed. You can scan UPI QR below.', 'error');
+    } finally {
+      setIsRazorpayPaying(false);
+    }
+  }
+
+  // 3. Booking Step 2B: Submit UPI UTR (Manual Fallback)
   async function handleSubmitUtr(e) {
     e.preventDefault();
     if (!utrNumber.trim() || utrNumber.trim().length < 6) {
@@ -939,6 +1010,41 @@ export default function App() {
               <p style={{ fontSize: '14px', color: 'var(--charcoal-600)', marginBottom: '20px' }}>
                 Payable Amount: <strong style={{ color: 'var(--red-accent)', fontSize: '20px' }}>₹100</strong>
               </p>
+
+              {/* Instant Razorpay Online Payment */}
+              {!isPaymentSubmitted && (
+                <div style={{ marginBottom: '28px', background: 'var(--cream-100)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1.5px solid var(--maroon-700)' }}>
+                  <div style={{ fontSize: '12px', fontWeight: 800, color: 'var(--maroon-900)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '8px' }}>
+                    ⚡ Instant Automatic Confirmation
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleRazorpayPayment}
+                    disabled={isRazorpayPaying}
+                    className="btn-primary"
+                    style={{
+                      width: '100%',
+                      justifyContent: 'center',
+                      background: 'linear-gradient(135deg, #4A1422 0%, #C53A50 100%)',
+                      padding: '16px 20px',
+                      fontSize: '15px',
+                      fontWeight: 700,
+                      boxShadow: '0 4px 14px rgba(74, 20, 34, 0.25)',
+                    }}
+                  >
+                    {isRazorpayPaying ? 'Opening Secure Checkout...' : '💳 Pay ₹100 Online via Razorpay (UPI, GPay, Cards)'}
+                  </button>
+                  <small style={{ color: 'var(--charcoal-600)', fontSize: '12px', display: 'block', marginTop: '8px', textAlign: 'center' }}>
+                    Instant ticket confirmation with QR code immediately after payment.
+                  </small>
+                </div>
+              )}
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', margin: '20px 0 24px 0' }}>
+                <div style={{ flex: 1, height: '1px', background: 'var(--cream-300)' }}></div>
+                <span style={{ fontSize: '11px', color: 'var(--charcoal-500)', fontWeight: 800, letterSpacing: '1px' }}>OR PAY VIA DIRECT UPI QR CODE</span>
+                <div style={{ flex: 1, height: '1px', background: 'var(--cream-300)' }}></div>
+              </div>
 
               {/* QR Image Display */}
               <div className="qr-display-frame">
