@@ -473,21 +473,54 @@ export async function getVoterDeviceHash(): Promise<string> {
 // B. Fetch Public Active Performers (For Rating & Voting Page)
 export async function getActivePerformers(eventId?: string): Promise<Performer[]> {
   if (isSupabaseConfigured && supabase) {
+    // 1. Try secure public RPC function (bypasses all anon RLS blocks)
+    try {
+      const { data: rpcData, error: rpcErr } = await supabase.rpc('get_public_performers');
+      if (!rpcErr && Array.isArray(rpcData) && rpcData.length > 0) {
+        return rpcData as Performer[];
+      }
+    } catch {
+      // Proceed to direct query
+    }
+
+    // 2. Direct table query (with fallback across active performers)
     try {
       let query = supabase
         .from('performers')
         .select('*')
         .eq('is_active', true)
         .order('display_order', { ascending: true })
-        .order('name', { ascending: true });
+        .order('created_at', { ascending: true });
 
-      if (eventId) {
-        query = query.eq('event_id', eventId);
+      // Only filter by eventId if it's a real database UUID and not the initial placeholder
+      if (eventId && !eventId.startsWith('e1fa0000')) {
+        const { data: byEvent } = await query.eq('event_id', eventId);
+        if (byEvent && byEvent.length > 0) {
+          return byEvent.map((p: any) => ({
+            id: p.id,
+            eventId: p.event_id,
+            name: p.name,
+            category: p.category,
+            description: p.description,
+            photoUrl: p.photo_url,
+            isActive: p.is_active,
+            displayOrder: p.display_order,
+            performanceStatus: p.performance_status || 'UPCOMING',
+            ratingsEnabled: Boolean(p.ratings_enabled),
+          }));
+        }
       }
 
-      const { data, error } = await query;
-      if (!error && data && data.length > 0) {
-        return data.map((p: any) => ({
+      // If no eventId or event filter returned empty, get all active performers from database
+      const { data: allActive, error: allErr } = await supabase
+        .from('performers')
+        .select('*')
+        .eq('is_active', true)
+        .order('display_order', { ascending: true })
+        .order('created_at', { ascending: true });
+
+      if (!allErr && allActive && allActive.length > 0) {
+        return allActive.map((p: any) => ({
           id: p.id,
           eventId: p.event_id,
           name: p.name,
@@ -496,16 +529,16 @@ export async function getActivePerformers(eventId?: string): Promise<Performer[]
           photoUrl: p.photo_url,
           isActive: p.is_active,
           displayOrder: p.display_order,
-          performanceStatus: p.performance_status || 'COMPLETED',
+          performanceStatus: p.performance_status || 'UPCOMING',
           ratingsEnabled: Boolean(p.ratings_enabled),
         }));
       }
-    } catch {
-      // Fallback
+    } catch (err) {
+      console.warn('Error fetching performers from database:', err);
     }
   }
 
-  // Default sample performers for demo / fallback
+  // Fallback demo performers only if database has 0 records
   return [
     { id: 'p1', name: 'Aarav Deshmukh', category: 'Poetry & Shayari', description: 'Spoken word piece on memories of Basmat and modern love.', isActive: true, displayOrder: 1, performanceStatus: 'COMPLETED', ratingsEnabled: true },
     { id: 'p2', name: 'Simran Kaur', category: 'Stand-up Comedy', description: 'Observational storytelling on small-town college life.', isActive: true, displayOrder: 2, performanceStatus: 'COMPLETED', ratingsEnabled: true },

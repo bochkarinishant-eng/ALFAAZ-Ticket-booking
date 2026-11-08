@@ -508,15 +508,16 @@ serve(async (req: Request) => {
         });
       }
 
-      let eventId = performer.eventId;
-      if (!eventId) {
-        const { data: activeEvent } = await supabase
-          .from('events')
-          .select('id')
-          .eq('active', true)
-          .maybeSingle();
-        eventId = activeEvent?.id;
-      }
+      // Always resolve to the real active event in database to prevent dummy ID mismatches
+      const { data: activeEvent } = await supabase
+        .from('events')
+        .select('id')
+        .eq('active', true)
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+
+      const eventId = activeEvent?.id || performer.eventId;
 
       const payload: any = {
         name: performer.name.trim(),
