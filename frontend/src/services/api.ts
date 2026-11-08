@@ -497,7 +497,7 @@ export async function getActivePerformers(eventId?: string): Promise<Performer[]
           isActive: p.is_active,
           displayOrder: p.display_order,
           performanceStatus: p.performance_status || 'COMPLETED',
-          ratingsEnabled: p.ratings_enabled ?? true,
+          ratingsEnabled: Boolean(p.ratings_enabled),
         }));
       }
     } catch {

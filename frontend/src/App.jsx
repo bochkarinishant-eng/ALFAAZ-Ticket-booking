@@ -235,8 +235,12 @@ export default function App() {
   useEffect(() => {
     if (page === 'vote') {
       loadActivePerformers(event.id);
+      const timer = setInterval(() => loadActivePerformers(event.id), 3000);
+      return () => clearInterval(timer);
     } else if (page === 'results') {
       loadPublicWinners(event.id);
+      const timer = setInterval(() => loadPublicWinners(event.id), 5000);
+      return () => clearInterval(timer);
     }
   }, [page, event.id]);
 
@@ -1811,8 +1815,8 @@ export default function App() {
                 {performers.map((p) => {
                   const hasUserRated = Boolean(userRatings[p.id]);
                   const userRatingVal = userRatings[p.id] || 0;
-                  // Rating is enabled whenever the event is not closed AND the performer is performing/completed or ratings are explicitly turned on
-                  const isRatingEnabled = event.votingStatus !== 'CLOSED' && (Boolean(p.ratingsEnabled) || p.performanceStatus === 'PERFORMING' || p.performanceStatus === 'COMPLETED');
+                  // Rating is enabled ONLY IF event is open, performer ratings are NOT paused, and stage status is not upcoming
+                  const isRatingEnabled = event.votingStatus !== 'CLOSED' && Boolean(p.ratingsEnabled) && p.performanceStatus !== 'UPCOMING';
                   const currentSelected = pendingRatings[p.id] || 0;
                   const currentHover = hoverStars[p.id] || 0;
                   const activeStarDisplay = currentHover || currentSelected;
@@ -1876,17 +1880,17 @@ export default function App() {
                             </div>
                           </div>
                         ) : !isRatingEnabled ? (
-                          /* RATING NOT YET ENABLED OR UPCOMING */
+                          /* RATING NOT YET ENABLED, PAUSED, OR UPCOMING */
                           <div className="rating-locked-box">
                             <span className="lock-icon">
-                              {p.performanceStatus === 'UPCOMING' ? '⏳' : '⏸️'}
+                              {event.votingStatus === 'CLOSED' ? '🔒' : p.performanceStatus === 'UPCOMING' ? '⏳' : '⏸️'}
                             </span>
                             <span>
-                              {p.performanceStatus === 'UPCOMING'
+                              {event.votingStatus === 'CLOSED'
+                                ? 'Audience rating has concluded for this event'
+                                : p.performanceStatus === 'UPCOMING'
                                 ? 'Rating will open after performance begins'
-                                : (event.votingStatus === 'CLOSED'
-                                    ? 'Audience rating has concluded for this event'
-                                    : 'Rating for this artist will be enabled shortly')}
+                                : 'Audience rating is currently paused for this performance'}
                             </span>
                           </div>
                         ) : (
