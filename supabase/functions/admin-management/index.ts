@@ -634,7 +634,91 @@ serve(async (req: Request) => {
       });
     }
 
-    // 10. Action: Export CSV
+    // 10. Action: Update Voting Status (Open / Close / Reveal)
+    if (action === 'update_voting_status' && req.method === 'POST') {
+      const body = await req.json();
+      const { status, resultsRevealed } = body;
+      const nowIso = new Date().toISOString();
+
+      const updateData: any = { updated_at: nowIso };
+      if (status) updateData.voting_status = status;
+      if (typeof resultsRevealed === 'boolean') updateData.results_revealed = resultsRevealed;
+
+      const { data: updatedEvent, error: evErr } = await supabase
+        .from('events')
+        .update(updateData)
+        .eq('active', true)
+        .select()
+        .maybeSingle();
+
+      if (evErr) throw evErr;
+
+      return new Response(JSON.stringify({ success: true, event: updatedEvent }), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // 11. Action: Calculate Winners
+    if (action === 'calculate_winners' && req.method === 'POST') {
+      const nowIso = new Date().toISOString();
+      const { data: updatedEvent, error: evErr } = await supabase
+        .from('events')
+        .update({ winners_calculated: true, updated_at: nowIso })
+        .eq('active', true)
+        .select()
+        .maybeSingle();
+
+      if (evErr) throw evErr;
+
+      return new Response(JSON.stringify({ success: true, message: 'Winners calculated', event: updatedEvent }), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // 12. Action: Enable All Completed Ratings
+    if (action === 'enable_all_completed_ratings' && req.method === 'POST') {
+      const nowIso = new Date().toISOString();
+      await supabase
+        .from('performers')
+        .update({ ratings_enabled: true, updated_at: nowIso })
+        .eq('performance_status', 'COMPLETED');
+
+      await supabase
+        .from('events')
+        .update({ voting_status: 'OPEN', updated_at: nowIso })
+        .eq('active', true);
+
+      return new Response(JSON.stringify({ success: true, message: 'Audience ratings enabled for all completed performers' }), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // 13. Action: Update Award Titles
+    if (action === 'update_award_titles' && req.method === 'POST') {
+      const body = await req.json();
+      const { first, second, third } = body;
+      const nowIso = new Date().toISOString();
+
+      await supabase
+        .from('events')
+        .update({
+          first_place_award: first,
+          second_place_award: second,
+          third_place_award: third,
+          updated_at: nowIso,
+        })
+        .eq('active', true);
+
+      return new Response(JSON.stringify({ success: true, message: 'Award titles updated' }), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // 14. Action: Export CSV
     if (action === 'export_csv') {
       const { data: bookings } = await supabase
         .from('bookings')

@@ -678,6 +678,17 @@ export async function adminUpdatePerformerStageStatus(
 
 // I. Admin: Enable ratings for all completed performers at once
 export async function adminEnableAllCompletedRatings(token: string, eventId: string) {
+  try {
+    const res = await fetch(`${FUNCTIONS_BASE}/admin-management?action=enable_all_completed_ratings`, {
+      method: 'POST',
+      headers: getHeaders(token),
+      body: JSON.stringify({ eventId }),
+    });
+    if (res.ok) return await res.json();
+  } catch (err) {
+    console.warn('Edge function enable_all_completed_ratings fallback:', err);
+  }
+
   if (isSupabaseConfigured && supabase) {
     const { error } = await supabase
       .from('performers')
@@ -696,6 +707,17 @@ export async function adminEnableAllCompletedRatings(token: string, eventId: str
 
 // J. Admin: Calculate Winners (Finalize rankings after closing voting)
 export async function adminCalculateWinners(token: string, eventId: string) {
+  try {
+    const res = await fetch(`${FUNCTIONS_BASE}/admin-management?action=calculate_winners`, {
+      method: 'POST',
+      headers: getHeaders(token),
+      body: JSON.stringify({ eventId }),
+    });
+    if (res.ok) return await res.json();
+  } catch (err) {
+    console.warn('Edge function calculate_winners fallback:', err);
+  }
+
   if (isSupabaseConfigured && supabase) {
     const { error } = await supabase
       .from('events')
@@ -719,6 +741,17 @@ export async function adminUpdateAwardTitles(
   second: string,
   third: string
 ) {
+  try {
+    const res = await fetch(`${FUNCTIONS_BASE}/admin-management?action=update_award_titles`, {
+      method: 'POST',
+      headers: getHeaders(token),
+      body: JSON.stringify({ eventId, first, second, third }),
+    });
+    if (res.ok) return await res.json();
+  } catch (err) {
+    console.warn('Edge function update_award_titles fallback:', err);
+  }
+
   if (isSupabaseConfigured && supabase) {
     const { error } = await supabase
       .from('events')
@@ -743,6 +776,17 @@ export async function adminUpdateVotingStatus(
   status: 'DRAFT' | 'OPEN' | 'CLOSED',
   resultsRevealed: boolean
 ) {
+  try {
+    const res = await fetch(`${FUNCTIONS_BASE}/admin-management?action=update_voting_status`, {
+      method: 'POST',
+      headers: getHeaders(token),
+      body: JSON.stringify({ eventId, status, resultsRevealed }),
+    });
+    if (res.ok) return await res.json();
+  } catch (err) {
+    console.warn('Edge function update_voting_status fallback:', err);
+  }
+
   if (isSupabaseConfigured && supabase) {
     const { error } = await supabase
       .from('events')

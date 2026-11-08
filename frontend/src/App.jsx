@@ -704,9 +704,9 @@ export default function App() {
   }, [page, adminToken, adminTab, event.id]);
 
   async function handleToggleVotingStatus(newStatus) {
+    setEvent(prev => ({ ...prev, votingStatus: newStatus }));
     try {
       await api.adminUpdateVotingStatus(adminToken, event.id, newStatus, event.resultsRevealed || false);
-      setEvent(prev => ({ ...prev, votingStatus: newStatus }));
       showNotice(`Audience rating status set to: ${newStatus}`, 'success');
       loadAdminVotingData(adminToken, event.id);
       loadEventDetails();
@@ -717,9 +717,9 @@ export default function App() {
 
   async function handleToggleRevealWinner() {
     const nextRevealed = !event.resultsRevealed;
+    setEvent(prev => ({ ...prev, resultsRevealed: nextRevealed }));
     try {
       await api.adminUpdateVotingStatus(adminToken, event.id, event.votingStatus || 'OPEN', nextRevealed);
-      setEvent(prev => ({ ...prev, resultsRevealed: nextRevealed }));
       showNotice(nextRevealed ? 'Top 3 Winners are now officially revealed to the public!' : 'Results hidden from public', 'info');
       loadAdminVotingData(adminToken, event.id);
       loadPublicWinners(event.id);
@@ -730,9 +730,9 @@ export default function App() {
   }
 
   async function handleCalculateWinners() {
+    setEvent(prev => ({ ...prev, winnersCalculated: true }));
     try {
       await api.adminCalculateWinners(adminToken, event.id);
-      setEvent(prev => ({ ...prev, winnersCalculated: true }));
       showNotice('Top 3 Winners calculated and finalized from valid audience ratings!', 'success');
       loadAdminVotingData(adminToken, event.id);
     } catch (err) {
@@ -743,6 +743,7 @@ export default function App() {
   async function handleEnableAllCompletedRatings() {
     try {
       await api.adminEnableAllCompletedRatings(adminToken, event.id);
+      setEvent(prev => ({ ...prev, votingStatus: 'OPEN' }));
       showNotice('Audience ratings enabled for all Completed performers!', 'success');
       loadAdminVotingData(adminToken, event.id);
       loadActivePerformers(event.id);
@@ -863,28 +864,60 @@ export default function App() {
     }
   }
 
-  function downloadStageQrPng() {
-    if (!stageQrDataUrl) return;
+  async function downloadStageQrPng() {
+    let urlToDownload = stageQrDataUrl;
+    if (!urlToDownload) {
+      try {
+        const votingUrl = `${window.location.origin}/?page=vote`;
+        urlToDownload = await QRCode.toDataURL(votingUrl, {
+          width: 512,
+          margin: 2,
+          color: { dark: '#4A1422', light: '#FFFFFF' },
+        });
+        setStageQrDataUrl(urlToDownload);
+      } catch (e) {
+        showNotice('Failed to generate stage QR code', 'error');
+        return;
+      }
+    }
     const link = document.createElement('a');
-    link.href = stageQrDataUrl;
+    link.href = urlToDownload;
     link.download = 'Alfaaz-Audience-Rating-Stage-QR.png';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    showNotice('Stage QR code downloaded!', 'success');
+  }
+
+  async function copyTextToClipboard(text, successMsg) {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-999999px';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+      }
+      showNotice(successMsg, 'success');
+    } catch {
+      showNotice(`Copied: ${text}`, 'info');
+    }
   }
 
   function copyVotingLink() {
     const url = `${window.location.origin}/?page=vote`;
-    navigator.clipboard.writeText(url).then(() => {
-      showNotice('Audience rating URL copied to clipboard!', 'success');
-    });
+    copyTextToClipboard(url, 'Audience rating URL copied to clipboard!');
   }
 
   function copyResultsLink() {
     const url = `${window.location.origin}/?page=results`;
-    navigator.clipboard.writeText(url).then(() => {
-      showNotice('Winner results announcement URL copied!', 'success');
-    });
+    copyTextToClipboard(url, 'Winner results announcement URL copied!');
   }
 
   // Filtered admin bookings
