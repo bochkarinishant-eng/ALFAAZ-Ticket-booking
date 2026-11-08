@@ -781,6 +781,20 @@ export async function adminSavePerformer(
     ratingsEnabled?: boolean;
   }
 ) {
+  // First, attempt through admin-management Edge Function (bypasses RLS with service role)
+  try {
+    const res = await fetch(`${FUNCTIONS_BASE}/admin-management?action=save_performer`, {
+      method: 'POST',
+      headers: getHeaders(token),
+      body: JSON.stringify({ performer }),
+    });
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (err) {
+    console.warn('Edge function save_performer fallback to direct client:', err);
+  }
+
   if (isSupabaseConfigured && supabase) {
     const payload: any = {
       event_id: performer.eventId,
@@ -818,6 +832,20 @@ export async function adminSavePerformer(
 }
 
 export async function adminDeletePerformer(token: string, performerId: string) {
+  // First, attempt through admin-management Edge Function
+  try {
+    const res = await fetch(`${FUNCTIONS_BASE}/admin-management?action=delete_performer`, {
+      method: 'POST',
+      headers: getHeaders(token),
+      body: JSON.stringify({ performerId }),
+    });
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (err) {
+    console.warn('Edge function delete_performer fallback to direct client:', err);
+  }
+
   if (isSupabaseConfigured && supabase) {
     const { count } = await supabase
       .from('performance_ratings')
