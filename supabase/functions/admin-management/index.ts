@@ -197,36 +197,96 @@ serve(async (req: Request) => {
       const body = await req.json();
       const { paymentId } = body;
 
-      // Look up by payment ID or by booking ID
-      let { data: payment } = await supabase
+      if (!paymentId) {
+        return new Response(JSON.stringify({ error: 'Payment or Booking ID is required' }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      // Step 1: Look up payment by its ID
+      let payment: any = null;
+      let { data: pById } = await supabase
         .from('payments')
-        .select('*, booking:bookings(*)')
+        .select('*')
         .eq('id', paymentId)
         .maybeSingle();
 
-      if (!payment) {
-        const res = await supabase
+      if (pById) {
+        payment = pById;
+      } else {
+        // Step 2: Try looking up payment by booking_id
+        const { data: pByBookingId } = await supabase
           .from('payments')
-          .select('*, booking:bookings(*)')
+          .select('*')
           .eq('booking_id', paymentId)
           .maybeSingle();
-        payment = res.data;
+        if (pByBookingId) {
+          payment = pByBookingId;
+        }
       }
 
-      if (!payment) {
-        return new Response(JSON.stringify({ error: 'Payment not found' }), {
+      // Step 3: Find associated booking
+      let booking: any = null;
+      if (payment?.booking_id) {
+        const { data: b } = await supabase
+          .from('bookings')
+          .select('*')
+          .eq('id', payment.booking_id)
+          .maybeSingle();
+        booking = b;
+      }
+
+      // Step 4: If booking still not found, check if paymentId is booking ID or reference
+      if (!booking) {
+        const { data: bById } = await supabase
+          .from('bookings')
+          .select('*')
+          .eq('id', paymentId)
+          .maybeSingle();
+        if (bById) {
+          booking = bById;
+        } else {
+          const { data: bByRef } = await supabase
+            .from('bookings')
+            .select('*')
+            .eq('booking_reference', paymentId)
+            .maybeSingle();
+          if (bByRef) booking = bByRef;
+        }
+      }
+
+      if (!booking) {
+        return new Response(JSON.stringify({ error: `Booking not found for ID: ${paymentId}` }), {
           status: 404,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
 
-      const booking = payment.booking;
       const nowIso = new Date().toISOString();
 
-      await supabase
-        .from('payments')
-        .update({ status: 'VERIFIED', verified_at: nowIso, updated_at: nowIso })
-        .eq('id', payment.id);
+      // Step 5: If payment row didn't exist yet, create it now
+      if (!payment) {
+        const { data: newP } = await supabase
+          .from('payments')
+          .insert({
+            booking_id: booking.id,
+            amount: booking.amount || 100,
+            currency: 'INR',
+            payment_method: 'UPI',
+            status: 'VERIFIED',
+            verified_at: nowIso,
+            updated_at: nowIso,
+          })
+          .select()
+          .single();
+        payment = newP;
+      } else {
+        await supabase
+          .from('payments')
+          .update({ status: 'VERIFIED', verified_at: nowIso, updated_at: nowIso })
+          .eq('id', payment.id);
+      }
 
       await supabase
         .from('bookings')
@@ -278,7 +338,7 @@ serve(async (req: Request) => {
       await supabase.from('admin_audit_logs').insert({
         admin_id: user.id,
         action: 'APPROVE_PAYMENT',
-        details: { paymentId: payment.id, bookingId: booking.id, ticketNumber: ticket?.ticket_number },
+        details: { paymentId: payment?.id, bookingId: booking.id, ticketNumber: ticket?.ticket_number },
       });
 
       return new Response(
@@ -292,22 +352,98 @@ serve(async (req: Request) => {
       const body = await req.json();
       const { paymentId, reason } = body;
 
-      let { data: payment } = await supabase
+      if (!paymentId) {
+        return new Response(JSON.stringify({ error: 'Payment or Booking ID is required' }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      let payment: any = null;
+      let { data: pById } = await supabase
         .from('payments')
-        .select('*, booking:bookings(*)')
+        .select('*')
         .eq('id', paymentId)
         .maybeSingle();
 
-      if (!payment) {
-        const res = await supabase
+      if (pById) {
+        payment = pById;
+      } else {
+        const { data: pByBookingId } = await supabase
           .from('payments')
-          .select('*, booking:bookings(*)')
+          .select('*')
           .eq('booking_id', paymentId)
           .maybeSingle();
-        payment = res.data;
+        if (pByBookingId) payment = pByBookingId;
       }
 
-      if (!payment) {
+      let booking: any = null;
+      if (payment?.booking_id) {
+        const { data: b } = await supabase
+          .from('bookings')
+          .select('*')
+          .eq('id', payment.booking_id)
+          .maybeSingle();
+        booking = b;
+      }
+
+      if (!booking) {
+        const { data: bById } = await supabase
+          .from('bookings')
+          .select('*')
+          .eq('id', paymentId)
+          .maybeSingle();
+        if (bById) {
+          booking = bById;
+        } else {
+          const { data: bByRef } = await supabase
+            .from('bookings')
+            .select('*')
+            .eq('booking_reference', paymentId)
+            .maybeSingle();
+          if (bByRef) booking = bByRef;
+        }
+      }
+
+      if (!booking && !payment) {
+        return new Response(JSON.stringify({ error: 'Payment or Booking not found' }), {
+          status: 404,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      const nowIso = new Date().toISOString();
+      const bookingId = booking?.id || payment?.booking_id;
+
+      if (payment) {
+        await supabase
+          .from('payments')
+          .update({
+            status: 'REJECTED',
+            rejection_reason: reason || 'Invalid UTR or verification failed',
+            updated_at: nowIso,
+          })
+          .eq('id', payment.id);
+      }
+
+      if (bookingId) {
+        await supabase
+          .from('bookings')
+          .update({ status: 'REJECTED', updated_at: nowIso })
+          .eq('id', bookingId);
+      }
+
+      await supabase.from('admin_audit_logs').insert({
+        admin_id: user.id,
+        action: 'REJECT_PAYMENT',
+        details: { paymentId: payment?.id, bookingId, reason },
+      });
+
+      return new Response(JSON.stringify({ success: true, message: 'Payment rejected' }), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
         return new Response(JSON.stringify({ error: 'Payment not found' }), {
           status: 404,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },

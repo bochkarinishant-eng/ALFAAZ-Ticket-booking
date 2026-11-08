@@ -1,7 +1,9 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+const SUPABASE_URL =
+  import.meta.env.VITE_SUPABASE_URL || 'https://rvhiwnlshcdqqqqtwjfz.supabase.co';
+const SUPABASE_ANON_KEY =
+  import.meta.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_l_5th1aTpsN_2pWcf0-pwQ_wMh0vZJz';
 const FUNCTIONS_BASE = `${SUPABASE_URL}/functions/v1`;
 
 function getHeaders(token?: string): Record<string, string> {
