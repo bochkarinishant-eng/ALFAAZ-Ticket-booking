@@ -444,43 +444,6 @@ serve(async (req: Request) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
-        return new Response(JSON.stringify({ error: 'Payment not found' }), {
-          status: 404,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
-      }
-
-      const nowIso = new Date().toISOString();
-      await supabase
-        .from('payments')
-        .update({
-          status: 'REJECTED',
-          rejection_reason: reason || 'Payment verification failed',
-          updated_at: nowIso,
-        })
-        .eq('id', payment.id);
-
-      await supabase
-        .from('bookings')
-        .update({ status: 'REJECTED', updated_at: nowIso })
-        .eq('id', payment.booking_id);
-
-      await supabase
-        .from('tickets')
-        .update({ status: 'CANCELLED' })
-        .eq('booking_id', payment.booking_id);
-
-      await supabase.from('admin_audit_logs').insert({
-        admin_id: user.id,
-        action: 'REJECT_PAYMENT',
-        details: { paymentId, reason },
-      });
-
-      return new Response(JSON.stringify({ success: true, message: 'Payment rejected' }), {
-        status: 200,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
 
     // 6. Action: Cancel Ticket
     if (action === 'cancel_ticket' && req.method === 'POST') {
