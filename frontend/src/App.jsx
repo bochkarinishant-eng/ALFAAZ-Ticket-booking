@@ -753,10 +753,11 @@ export default function App() {
 
   async function handleTogglePerformerStageStatus(performerId, newStatus, currentRatingsEnabled) {
     try {
-      // Automatically enable ratings if marked completed, or keep status
-      const autoEnableRating = newStatus === 'COMPLETED' ? true : currentRatingsEnabled;
+      // Automatically enable ratings if marked performing or completed, or keep status
+      const autoEnableRating = (newStatus === 'COMPLETED' || newStatus === 'PERFORMING') ? true : currentRatingsEnabled;
       await api.adminUpdatePerformerStageStatus(adminToken, performerId, newStatus, autoEnableRating);
       showNotice(`Performer marked as: ${newStatus}`, 'success');
+      setEvent(prev => ({ ...prev, votingStatus: 'OPEN' }));
       loadAdminVotingData(adminToken, event.id);
       loadActivePerformers(event.id);
     } catch (err) {
@@ -768,6 +769,9 @@ export default function App() {
     try {
       await api.adminUpdatePerformerStageStatus(adminToken, performerId, currentStatus, newRatingsEnabled);
       showNotice(newRatingsEnabled ? 'Audience rating enabled for performer' : 'Audience rating paused', 'info');
+      if (newRatingsEnabled) {
+        setEvent(prev => ({ ...prev, votingStatus: 'OPEN' }));
+      }
       loadAdminVotingData(adminToken, event.id);
       loadActivePerformers(event.id);
     } catch (err) {
@@ -1728,17 +1732,13 @@ export default function App() {
 
               {/* Status Badges */}
               <div className="voting-status-wrap">
-                {event.votingStatus === 'OPEN' ? (
-                  <span className="voting-badge live">
-                    <span className="live-dot-pulse"></span> AUDIENCE RATINGS ACTIVE
-                  </span>
-                ) : event.votingStatus === 'CLOSED' ? (
+                {event.votingStatus === 'CLOSED' ? (
                   <span className="voting-badge closed">
                     🔒 RATINGS CONCLUDED
                   </span>
                 ) : (
-                  <span className="voting-badge draft">
-                    ⏳ RATINGS OPEN SOON
+                  <span className="voting-badge live">
+                    <span className="live-dot-pulse"></span> AUDIENCE RATINGS ACTIVE
                   </span>
                 )}
               </div>
@@ -1778,7 +1778,8 @@ export default function App() {
                 {performers.map((p) => {
                   const hasUserRated = Boolean(userRatings[p.id]);
                   const userRatingVal = userRatings[p.id] || 0;
-                  const isRatingEnabled = event.votingStatus === 'OPEN' && p.ratingsEnabled && p.performanceStatus !== 'UPCOMING';
+                  // Rating is enabled whenever the event is not closed AND the performer is performing/completed or ratings are explicitly turned on
+                  const isRatingEnabled = event.votingStatus !== 'CLOSED' && (Boolean(p.ratingsEnabled) || p.performanceStatus === 'PERFORMING' || p.performanceStatus === 'COMPLETED');
                   const currentSelected = pendingRatings[p.id] || 0;
                   const currentHover = hoverStars[p.id] || 0;
                   const activeStarDisplay = currentHover || currentSelected;
@@ -1850,8 +1851,8 @@ export default function App() {
                             <span>
                               {p.performanceStatus === 'UPCOMING'
                                 ? 'Rating will open after performance begins'
-                                : (event.votingStatus !== 'OPEN'
-                                    ? 'Audience rating is currently closed'
+                                : (event.votingStatus === 'CLOSED'
+                                    ? 'Audience rating has concluded for this event'
                                     : 'Rating for this artist will be enabled shortly')}
                             </span>
                           </div>

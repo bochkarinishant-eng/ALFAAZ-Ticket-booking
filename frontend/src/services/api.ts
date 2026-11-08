@@ -639,6 +639,20 @@ export async function adminUpdatePerformerStageStatus(
   status: 'UPCOMING' | 'PERFORMING' | 'COMPLETED',
   ratingsEnabled: boolean
 ) {
+  // First try backend Edge Function (runs with service role to bypass RLS and auto-open event voting)
+  try {
+    const res = await fetch(`${FUNCTIONS_BASE}/admin-management?action=update_performer_status`, {
+      method: 'POST',
+      headers: getHeaders(token),
+      body: JSON.stringify({ performerId, status, ratingsEnabled }),
+    });
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (err) {
+    console.warn('Edge function update_performer_status fallback:', err);
+  }
+
   if (isSupabaseConfigured && supabase) {
     const { error } = await supabase
       .from('performers')
@@ -650,6 +664,13 @@ export async function adminUpdatePerformerStageStatus(
       .eq('id', performerId);
 
     if (error) throw new Error(error.message || 'Failed to update performer status');
+
+    if (ratingsEnabled || status === 'PERFORMING' || status === 'COMPLETED') {
+      await supabase
+        .from('events')
+        .update({ voting_status: 'OPEN' })
+        .eq('active', true);
+    }
     return { success: true };
   }
   return { success: true };

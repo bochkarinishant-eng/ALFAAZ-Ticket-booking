@@ -594,7 +594,47 @@ serve(async (req: Request) => {
       }
     }
 
-    // 9. Action: Export CSV
+    // 9. Action: Update Performer Status & Rating
+    if (action === 'update_performer_status' && req.method === 'POST') {
+      const body = await req.json();
+      const { performerId, status, ratingsEnabled } = body;
+
+      if (!performerId) {
+        return new Response(JSON.stringify({ error: 'Performer ID is required' }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      const nowIso = new Date().toISOString();
+      const { data: updatedPerformer, error: pErr } = await supabase
+        .from('performers')
+        .update({
+          performance_status: status || 'UPCOMING',
+          ratings_enabled: Boolean(ratingsEnabled),
+          updated_at: nowIso,
+        })
+        .eq('id', performerId)
+        .select()
+        .single();
+
+      if (pErr) throw pErr;
+
+      // If performer is performing, completed, or ratings are enabled, ensure event voting_status is OPEN
+      if (ratingsEnabled || status === 'PERFORMING' || status === 'COMPLETED') {
+        await supabase
+          .from('events')
+          .update({ voting_status: 'OPEN', updated_at: nowIso })
+          .eq('active', true);
+      }
+
+      return new Response(JSON.stringify({ success: true, performer: updatedPerformer }), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // 10. Action: Export CSV
     if (action === 'export_csv') {
       const { data: bookings } = await supabase
         .from('bookings')
