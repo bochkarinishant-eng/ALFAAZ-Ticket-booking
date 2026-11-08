@@ -83,6 +83,35 @@ export default function App() {
   // Global Alert / Toast
   const [notice, setNotice] = useState(null);
 
+  // Mobile Navigation State
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  // Audience Choice Voting State (Public)
+  const [performers, setPerformers] = useState([]);
+  const [loadingPerformers, setLoadingPerformers] = useState(false);
+  const [selectedPerformerId, setSelectedPerformerId] = useState(null);
+  const [showVoteConfirmModal, setShowVoteConfirmModal] = useState(false);
+  const [isSubmittingVote, setIsSubmittingVote] = useState(false);
+  const [hasVoted, setHasVoted] = useState(false);
+  const [votedPerformerName, setVotedPerformerName] = useState('');
+
+  // Admin Voting & Performer Management State
+  const [adminVotingResults, setAdminVotingResults] = useState(null);
+  const [adminPerformers, setAdminPerformers] = useState([]);
+  const [stageQrDataUrl, setStageQrDataUrl] = useState('');
+  const [stageFullscreenModal, setStageFullscreenModal] = useState(false);
+  const [performerModalOpen, setPerformerModalOpen] = useState(false);
+  const [editingPerformerId, setEditingPerformerId] = useState(null);
+  const [performerForm, setPerformerForm] = useState({
+    name: '',
+    category: 'Poetry & Shayari',
+    description: '',
+    photoUrl: '',
+    isActive: true,
+    displayOrder: 1,
+  });
+  const [isSavingPerformer, setIsSavingPerformer] = useState(false);
+
   const showNotice = (msg, type = 'info') => {
     setNotice({ msg, type });
     setTimeout(() => setNotice(null), 6000);
@@ -106,14 +135,17 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
-  // Inspect URL query parameters
+  // Inspect URL query parameters and pathname
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const ticketKey = params.get('ticket');
     const targetPage = params.get('page');
+    const path = window.location.pathname.toLowerCase();
 
     if (ticketKey) {
       loadTicketByAccessKey(ticketKey);
+    } else if (targetPage === 'vote' || path === '/vote') {
+      setPage('vote');
     } else if (targetPage === 'scanner') {
       const token = sessionStorage.getItem('alfaaz_admin_token');
       if (token) {
@@ -123,12 +155,59 @@ export default function App() {
         setPage('admin');
         showNotice('Door QR Scanner is restricted. Please sign in as admin.', 'info');
       }
-    } else if (targetPage === 'admin') {
+    } else if (targetPage === 'admin' || path.startsWith('/admin')) {
       setPage('admin');
+      if (path.includes('dashboard') || targetPage === 'dashboard') {
+        setAdminTab('voting');
+      }
     } else if (targetPage === 'myticket') {
       setPage('myticket');
+    } else if (targetPage === 'book') {
+      setPage('book');
     }
   }, []);
+
+  // Pre-generate Stage QR Code for Audience Voting
+  useEffect(() => {
+    const votingUrl = `${window.location.origin}/?page=vote`;
+    QRCode.toDataURL(votingUrl, {
+      width: 480,
+      margin: 2,
+      color: { dark: '#4A1422', light: '#FFFFFF' }
+    })
+      .then(url => setStageQrDataUrl(url))
+      .catch(() => {});
+  }, []);
+
+  // Load active performers when on voting page or event changes
+  async function loadActivePerformers(eventId = event.id) {
+    if (!eventId) return;
+    setLoadingPerformers(true);
+    try {
+      const list = await api.getActivePerformers(eventId);
+      setPerformers(list || []);
+
+      // Check if this device already voted
+      const storedPerformerId = localStorage.getItem(`alfaaz_voted_${eventId}`);
+      if (storedPerformerId) {
+        setHasVoted(true);
+        const match = (list || []).find(p => p.id === storedPerformerId);
+        if (match) {
+          setVotedPerformerName(match.name);
+        }
+      }
+    } catch {
+      // offline fallback
+    } finally {
+      setLoadingPerformers(false);
+    }
+  }
+
+  useEffect(() => {
+    if (page === 'vote') {
+      loadActivePerformers(event.id);
+    }
+  }, [page, event.id]);
 
   // Generate QR code data URL whenever confirmed ticket changes
   useEffect(() => {
@@ -546,6 +625,157 @@ export default function App() {
     }
   }
 
+  // ================= AUDIENCE VOTING HANDLERS =================
+  async function handleConfirmVote() {
+    if (!selectedPerformerId || !event.id) return;
+    const target = performers.find(p => p.id === selectedPerformerId);
+    setIsSubmittingVote(true);
+    try {
+      const res = await api.submitAudienceVote(event.id, selectedPerformerId);
+      setHasVoted(true);
+      setVotedPerformerName(target ? target.name : 'Selected Performer');
+      setShowVoteConfirmModal(false);
+      showNotice(res.message || 'Thank you! Your vote has been officially recorded.', 'success');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch (err) {
+      showNotice(err.message || 'Unable to submit vote. Please try again.', 'error');
+    } finally {
+      setIsSubmittingVote(false);
+    }
+  }
+
+  // Admin Voting Data Polling
+  async function loadAdminVotingData(token = adminToken, eventId = event.id) {
+    if (!token || !eventId) return;
+    try {
+      const [results, perfs] = await Promise.all([
+        api.getVotingResults(token, eventId),
+        api.adminGetPerformers(token, eventId)
+      ]);
+      if (results) setAdminVotingResults(results);
+      if (perfs) setAdminPerformers(perfs);
+    } catch {
+      // offline or silent retry
+    }
+  }
+
+  useEffect(() => {
+    if (page === 'admin' && adminToken && (adminTab === 'voting' || adminTab === 'performers')) {
+      loadAdminVotingData(adminToken, event.id);
+      const timer = setInterval(() => loadAdminVotingData(adminToken, event.id), 6000);
+      return () => clearInterval(timer);
+    }
+  }, [page, adminToken, adminTab, event.id]);
+
+  async function handleToggleVotingStatus(newStatus) {
+    try {
+      await api.adminUpdateVotingStatus(adminToken, event.id, newStatus, event.resultsRevealed || false);
+      setEvent(prev => ({ ...prev, votingStatus: newStatus }));
+      showNotice(`Voting status set to: ${newStatus}`, 'success');
+      loadAdminVotingData(adminToken, event.id);
+      loadEventDetails();
+    } catch (err) {
+      showNotice(err.message || 'Failed to change voting status', 'error');
+    }
+  }
+
+  async function handleToggleRevealWinner() {
+    const nextRevealed = !event.resultsRevealed;
+    try {
+      await api.adminUpdateVotingStatus(adminToken, event.id, event.votingStatus || 'OPEN', nextRevealed);
+      setEvent(prev => ({ ...prev, resultsRevealed: nextRevealed }));
+      showNotice(nextRevealed ? 'Winner is now revealed on public voting page!' : 'Winner hidden from public', 'info');
+      loadAdminVotingData(adminToken, event.id);
+      loadEventDetails();
+    } catch (err) {
+      showNotice(err.message || 'Failed to update winner reveal status', 'error');
+    }
+  }
+
+  function openAddPerformerModal() {
+    setEditingPerformerId(null);
+    setPerformerForm({
+      name: '',
+      category: 'Poetry & Shayari',
+      description: '',
+      photoUrl: '',
+      isActive: true,
+      displayOrder: (adminPerformers.length + 1)
+    });
+    setPerformerModalOpen(true);
+  }
+
+  function openEditPerformerModal(p) {
+    setEditingPerformerId(p.id);
+    setPerformerForm({
+      name: p.name,
+      category: p.category,
+      description: p.description || '',
+      photoUrl: p.photoUrl || '',
+      isActive: p.isActive,
+      displayOrder: p.displayOrder || 1
+    });
+    setPerformerModalOpen(true);
+  }
+
+  async function handleSavePerformer(e) {
+    e.preventDefault();
+    if (!performerForm.name.trim()) {
+      showNotice('Please enter performer name', 'error');
+      return;
+    }
+    setIsSavingPerformer(true);
+    try {
+      await api.adminSavePerformer(adminToken, {
+        id: editingPerformerId || undefined,
+        eventId: event.id,
+        name: performerForm.name.trim(),
+        category: performerForm.category.trim(),
+        description: performerForm.description?.trim() || '',
+        photoUrl: performerForm.photoUrl?.trim() || '',
+        isActive: performerForm.isActive,
+        displayOrder: Number(performerForm.displayOrder) || 1
+      });
+      showNotice(editingPerformerId ? 'Performer updated!' : 'Performer registered successfully!', 'success');
+      setPerformerModalOpen(false);
+      loadAdminVotingData(adminToken, event.id);
+      loadActivePerformers(event.id);
+    } catch (err) {
+      showNotice(err.message || 'Failed to save performer', 'error');
+    } finally {
+      setIsSavingPerformer(false);
+    }
+  }
+
+  async function handleDeletePerformer(performerId, performerName) {
+    if (!confirm(`Are you sure you want to remove ${performerName}? If votes already exist, they will be deactivated.`)) return;
+    try {
+      const res = await api.adminDeletePerformer(adminToken, performerId);
+      showNotice(res.message || 'Performer updated', 'info');
+      loadAdminVotingData(adminToken, event.id);
+      loadActivePerformers(event.id);
+    } catch (err) {
+      showNotice(err.message || 'Failed to delete performer', 'error');
+    }
+  }
+
+  function downloadStageQrPng() {
+    if (!stageQrDataUrl) return;
+    const link = document.createElement('a');
+    link.href = stageQrDataUrl;
+    link.download = 'Alfaaz-Audience-Voting-Stage-QR.png';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+
+  function copyVotingLink() {
+    const url = `${window.location.origin}/?page=vote`;
+    navigator.clipboard.writeText(url).then(() => {
+      showNotice('Audience voting URL copied to clipboard!', 'success');
+    });
+  }
+
   // Filtered admin bookings
   const filteredBookings = adminBookings.filter(b => {
     if (adminSearch.trim()) {
@@ -590,17 +820,86 @@ export default function App() {
       {/* HEADER: Minimalist, elegant sticky navigation */}
       <header className="site-header">
         <div className="header-inner">
-          <div className="brand-wrap" onClick={() => { setPage('home'); window.scrollTo(0, 0); }}>
+          <div className="brand-wrap" onClick={() => { setPage('home'); setMobileMenuOpen(false); window.scrollTo(0, 0); }}>
             <span className="brand-monogram">ALFAAZ</span>
             <span className="brand-dot">✦</span>
           </div>
           <nav className="nav-links">
             <button className={`nav-btn ${page === 'home' ? 'active' : ''}`} onClick={() => { setPage('home'); window.scrollTo(0, 0); }}>Event</button>
+            <button className={`nav-btn ${page === 'vote' ? 'active' : ''}`} onClick={() => { setPage('vote'); window.scrollTo(0, 0); }}>
+              Audience Vote {event.votingStatus === 'OPEN' ? <span className="nav-live-dot" title="Voting is Live!"></span> : null}
+            </button>
             <button className={`nav-btn ${page === 'myticket' ? 'active' : ''}`} onClick={() => { setPage('myticket'); window.scrollTo(0, 0); }}>Find My Ticket</button>
             <button className={`nav-btn ${page === 'admin' ? 'active' : ''}`} onClick={() => { setPage('admin'); window.scrollTo(0, 0); }}>Admin Login</button>
             <button className="nav-cta" onClick={() => { setPage('book'); window.scrollTo(0, 0); }}>Book Pass · ₹100</button>
           </nav>
+          
+          {/* Mobile Hamburger Toggle Button */}
+          <button
+            className={`mobile-menu-toggle ${mobileMenuOpen ? 'open' : ''}`}
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            aria-label="Toggle Navigation Menu"
+            type="button"
+          >
+            <span className="hamburger-line top"></span>
+            <span className="hamburger-line mid"></span>
+            <span className="hamburger-line bot"></span>
+          </button>
         </div>
+
+        {/* Mobile Navigation Drawer */}
+        {mobileMenuOpen && (
+          <div className="mobile-nav-backdrop" onClick={() => setMobileMenuOpen(false)}>
+            <div className="mobile-nav-drawer" onClick={e => e.stopPropagation()}>
+              <div className="mobile-nav-header">
+                <span className="brand-monogram">ALFAAZ</span>
+                <button className="mobile-nav-close" onClick={() => setMobileMenuOpen(false)} aria-label="Close menu">✕</button>
+              </div>
+              <div className="mobile-nav-menu">
+                <button
+                  className={`mobile-nav-item ${page === 'home' ? 'active' : ''}`}
+                  onClick={() => { setPage('home'); setMobileMenuOpen(false); window.scrollTo(0, 0); }}
+                >
+                  <span className="mobile-nav-icon">🎙️</span>
+                  <span>Event Details</span>
+                </button>
+                <button
+                  className={`mobile-nav-item ${page === 'vote' ? 'active' : ''}`}
+                  onClick={() => { setPage('vote'); setMobileMenuOpen(false); window.scrollTo(0, 0); }}
+                >
+                  <span className="mobile-nav-icon">🏆</span>
+                  <span>Audience Choice Voting</span>
+                  {event.votingStatus === 'OPEN' && <span className="mobile-badge-live">LIVE</span>}
+                </button>
+                <button
+                  className={`mobile-nav-item ${page === 'book' ? 'active' : ''}`}
+                  onClick={() => { setPage('book'); setMobileMenuOpen(false); window.scrollTo(0, 0); }}
+                >
+                  <span className="mobile-nav-icon">🎟️</span>
+                  <span>Book Pass · ₹100</span>
+                </button>
+                <button
+                  className={`mobile-nav-item ${page === 'myticket' ? 'active' : ''}`}
+                  onClick={() => { setPage('myticket'); setMobileMenuOpen(false); window.scrollTo(0, 0); }}
+                >
+                  <span className="mobile-nav-icon">📱</span>
+                  <span>Find My Ticket</span>
+                </button>
+                <button
+                  className={`mobile-nav-item ${page === 'admin' ? 'active' : ''}`}
+                  onClick={() => { setPage('admin'); setMobileMenuOpen(false); window.scrollTo(0, 0); }}
+                >
+                  <span className="mobile-nav-icon">🔒</span>
+                  <span>Admin Command</span>
+                </button>
+              </div>
+              <div className="mobile-nav-footer">
+                <p>9 Nov 2026 · Beyond Temptation, Basmat</p>
+                <p>Contact: +91 8624890246</p>
+              </div>
+            </div>
+          </div>
+        )}
       </header>
 
       <main>
@@ -1297,6 +1596,202 @@ export default function App() {
           </div>
         )}
 
+        {/* ================= PAGE: ALFAAZ AUDIENCE CHOICE VOTING ================= */}
+        {page === 'vote' && (
+          <div className="section voting-page-container">
+            {/* Page Header */}
+            <div className="voting-header">
+              <div className="section-eyebrow">STAGE AUDIENCE POLL</div>
+              <h1 className="voting-title">ALFAAZ AUDIENCE CHOICE AWARD</h1>
+              <p className="voting-subtitle">Your Voice. Your Favourite Performer.</p>
+
+              {/* Status Badges */}
+              <div className="voting-status-wrap">
+                {event.votingStatus === 'OPEN' ? (
+                  <span className="voting-badge live">
+                    <span className="live-dot-pulse"></span> VOTING IS LIVE
+                  </span>
+                ) : event.votingStatus === 'CLOSED' ? (
+                  <span className="voting-badge closed">
+                    🔒 VOTING CONCLUDED
+                  </span>
+                ) : (
+                  <span className="voting-badge draft">
+                    ⏳ VOTING OPENS SOON
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* WINNER REVEAL BANNER (Only displayed if admin explicitly toggles results_revealed = true) */}
+            {event.resultsRevealed && (
+              <div className="winner-announcement-card">
+                <div className="winner-crown-icon">🏆</div>
+                <div className="winner-eyebrow">AUDIENCE CHOICE WINNER</div>
+                <h2 className="winner-name">
+                  {adminVotingResults?.isTie
+                    ? `Co-Winners (${adminVotingResults.winnerCount}-Way Tie)`
+                    : (adminVotingResults?.performers?.[0]?.name || 'Official Winner Announced!')}
+                </h2>
+                <p className="winner-sub">
+                  Chosen by the live audience at Beyond Temptation, Basmat.
+                </p>
+              </div>
+            )}
+
+            {/* IF ALREADY VOTED ON THIS DEVICE */}
+            {hasVoted ? (
+              <div className="voted-success-card">
+                <div className="voted-icon-check">✓</div>
+                <h3>Thank You For Voting!</h3>
+                <p className="voted-message">
+                  Your anonymous vote {votedPerformerName ? <>for <strong>{votedPerformerName}</strong> </> : ''}has been securely recorded.
+                </p>
+                <div className="voted-privacy-note">
+                  <span>🔒</span> Each audience device is permitted one vote to ensure absolute fairness. Sit back and enjoy the performances!
+                </div>
+                <div className="voted-actions">
+                  <button className="btn-secondary" onClick={() => { setPage('home'); window.scrollTo(0, 0); }}>
+                    ← Back to Event
+                  </button>
+                  <button className="btn-primary" onClick={() => { setPage('book'); window.scrollTo(0, 0); }}>
+                    Book Another Pass · ₹100
+                  </button>
+                </div>
+              </div>
+            ) : event.votingStatus !== 'OPEN' ? (
+              /* VOTING NOT LIVE NOTICE */
+              <div className="voting-inactive-card">
+                <div className="inactive-icon">{event.votingStatus === 'CLOSED' ? '🔒' : '⏳'}</div>
+                <h3>{event.votingStatus === 'CLOSED' ? 'Voting is Now Closed' : 'Voting Has Not Started Yet'}</h3>
+                <p>
+                  {event.votingStatus === 'CLOSED'
+                    ? 'The host has concluded audience voting. Results will be announced on stage shortly!'
+                    : 'The stage host will open voting during the open mic performances. Please keep this page open!'}
+                </p>
+                <button className="btn-secondary" onClick={() => { setPage('home'); window.scrollTo(0, 0); }}>
+                  View Event Overview
+                </button>
+              </div>
+            ) : (
+              /* ACTIVE VOTING PERFORMER SELECTION */
+              <div>
+                <div className="performer-selection-guide">
+                  <p>Tap your favourite performer below to select, then click <strong>Submit Vote</strong>. No registration required.</p>
+                </div>
+
+                {loadingPerformers ? (
+                  <div className="loading-spinner-wrap">
+                    <div className="gold-spinner"></div>
+                    <p>Loading stage performers...</p>
+                  </div>
+                ) : performers.length === 0 ? (
+                  <div className="no-performers-card">
+                    <p>No performers are registered yet. Please check back shortly!</p>
+                  </div>
+                ) : (
+                  <div className="performers-grid">
+                    {performers.map((p) => {
+                      const isSelected = selectedPerformerId === p.id;
+                      return (
+                        <div
+                          key={p.id}
+                          className={`performer-card ${isSelected ? 'selected' : ''}`}
+                          onClick={() => setSelectedPerformerId(p.id)}
+                          role="button"
+                          tabIndex={0}
+                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setSelectedPerformerId(p.id); }}
+                        >
+                          <div className="performer-card-inner">
+                            <div className="performer-avatar-wrap">
+                              {p.photoUrl ? (
+                                <img src={p.photoUrl} alt={p.name} className="performer-photo" />
+                              ) : (
+                                <div className="performer-initials-avatar">
+                                  {p.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
+                                </div>
+                              )}
+                              <div className={`selection-indicator ${isSelected ? 'active' : ''}`}>
+                                {isSelected ? '✓' : ''}
+                              </div>
+                            </div>
+                            <div className="performer-details">
+                              <span className="performer-category-pill">{p.category}</span>
+                              <h3 className="performer-name">{p.name}</h3>
+                              {p.description && (
+                                <p className="performer-desc">{p.description}</p>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* SUBMIT BUTTON BAR */}
+                <div className="voting-action-bar">
+                  <button
+                    className="btn-primary btn-submit-vote"
+                    disabled={!selectedPerformerId || isSubmittingVote}
+                    onClick={() => setShowVoteConfirmModal(true)}
+                  >
+                    <span>
+                      {selectedPerformerId
+                        ? `Vote for ${performers.find(p => p.id === selectedPerformerId)?.name} →`
+                        : 'Select a Performer Above'}
+                    </span>
+                  </button>
+                  <div className="voting-disclaimer">
+                    <span>🛡️</span> 100% Anonymous. Single vote per device enforced.
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* CONFIRMATION MODAL */}
+            {showVoteConfirmModal && selectedPerformerId && (
+              <div className="modal-overlay" onClick={() => setShowVoteConfirmModal(false)}>
+                <div className="modal-dialog vote-confirm-modal" onClick={e => e.stopPropagation()}>
+                  <div className="modal-icon-spark">✦</div>
+                  <h3 className="modal-title">Confirm Your Vote</h3>
+                  <p className="modal-subtitle">You are about to cast your vote for:</p>
+                  
+                  <div className="modal-target-performer">
+                    <span className="target-category">
+                      {performers.find(p => p.id === selectedPerformerId)?.category}
+                    </span>
+                    <div className="target-name">
+                      {performers.find(p => p.id === selectedPerformerId)?.name}
+                    </div>
+                  </div>
+
+                  <p className="modal-warning">
+                    ⚠️ Each device can only vote <strong>once</strong>. Once submitted, your choice cannot be altered.
+                  </p>
+
+                  <div className="modal-btn-row">
+                    <button
+                      className="btn-secondary"
+                      disabled={isSubmittingVote}
+                      onClick={() => setShowVoteConfirmModal(false)}
+                    >
+                      Change Choice
+                    </button>
+                    <button
+                      className="btn-primary"
+                      disabled={isSubmittingVote}
+                      onClick={handleConfirmVote}
+                    >
+                      {isSubmittingVote ? 'Submitting...' : 'Confirm Vote ✓'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* ================= PAGE 6: ADMIN DASHBOARD (INCLUDES DOOR QR SCANNER) ================= */}
         {page === 'admin' && (
           <div className="admin-container">
@@ -1399,7 +1894,7 @@ export default function App() {
                   </div>
                 )}
 
-                {/* Navigation Tabs (includes Gate QR Scanner) */}
+                {/* Navigation Tabs (includes Gate QR Scanner & Audience Voting) */}
                 <div className="admin-tabs">
                   <button
                     className={`admin-tab-btn ${adminTab === 'payments' ? 'active' : ''}`}
@@ -1412,6 +1907,18 @@ export default function App() {
                     onClick={() => setAdminTab('bookings')}
                   >
                     All Bookings & Tickets ({adminBookings.length})
+                  </button>
+                  <button
+                    className={`admin-tab-btn ${adminTab === 'voting' ? 'active' : ''}`}
+                    onClick={() => setAdminTab('voting')}
+                  >
+                    🏆 Audience Voting ({adminVotingResults?.totalVotes || 0})
+                  </button>
+                  <button
+                    className={`admin-tab-btn ${adminTab === 'performers' ? 'active' : ''}`}
+                    onClick={() => setAdminTab('performers')}
+                  >
+                    🎤 Performers ({adminPerformers.length})
                   </button>
                   <button
                     className={`admin-tab-btn ${adminTab === 'scanner' ? 'active' : ''}`}
@@ -1714,6 +2221,428 @@ export default function App() {
                     </div>
                   </div>
                 )}
+
+                {/* TAB 5: AUDIENCE VOTING & REAL-TIME RESULTS */}
+                {adminTab === 'voting' && (
+                  <div className="admin-voting-tab">
+                    {/* Control Bar */}
+                    <div className="admin-voting-controls">
+                      <div className="voting-status-indicator-group">
+                        <span className={`status-pill ${event.votingStatus === 'OPEN' ? 'live' : event.votingStatus === 'CLOSED' ? 'rejected' : 'pending'}`}>
+                          STATUS: {event.votingStatus || 'DRAFT'}
+                        </span>
+                        <span className={`status-pill ${event.resultsRevealed ? 'verified' : 'pending'}`}>
+                          WINNER: {event.resultsRevealed ? 'REVEALED TO PUBLIC' : 'HIDDEN FROM PUBLIC'}
+                        </span>
+                      </div>
+
+                      <div className="admin-action-btn-row">
+                        {event.votingStatus !== 'OPEN' ? (
+                          <button
+                            className="btn-action primary-action"
+                            onClick={() => handleToggleVotingStatus('OPEN')}
+                          >
+                            ▶️ Start / Reopen Voting
+                          </button>
+                        ) : (
+                          <button
+                            className="btn-action"
+                            style={{ background: '#991b1b', color: '#fff' }}
+                            onClick={() => handleToggleVotingStatus('CLOSED')}
+                          >
+                            ⏸️ Stop Voting
+                          </button>
+                        )}
+
+                        <button
+                          className="btn-secondary"
+                          onClick={handleToggleRevealWinner}
+                        >
+                          {event.resultsRevealed ? '👁️ Hide Winner from Public' : '🏆 Reveal Winner on Stage'}
+                        </button>
+
+                        <button
+                          className="btn-secondary"
+                          onClick={() => setStageFullscreenModal(true)}
+                        >
+                          📺 Stage Projector Mode
+                        </button>
+
+                        <button
+                          className="btn-secondary"
+                          onClick={downloadStageQrPng}
+                        >
+                          📥 Download Stage QR
+                        </button>
+
+                        <button
+                          className="btn-secondary"
+                          onClick={copyVotingLink}
+                        >
+                          🔗 Copy Vote Link
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Voting Metrics Overview */}
+                    <div className="admin-stats-grid" style={{ marginTop: '20px' }}>
+                      <div className="admin-stat-card">
+                        <div className="stat-label">Total Votes Cast</div>
+                        <div className="stat-val">{adminVotingResults?.totalVotes || 0}</div>
+                      </div>
+                      <div className="admin-stat-card">
+                        <div className="stat-label">Active Performers</div>
+                        <div className="stat-val">{adminPerformers.filter(p => p.isActive).length}</div>
+                      </div>
+                      <div className="admin-stat-card">
+                        <div className="stat-label">Leader / Top Performer</div>
+                        <div className="stat-val" style={{ fontSize: '20px' }}>
+                          {adminVotingResults?.performers?.[0]?.name ? (
+                            adminVotingResults.isTie ? (
+                              <span style={{ color: '#d97706' }}>Tie ({adminVotingResults.winnerCount} Artists)</span>
+                            ) : (
+                              adminVotingResults.performers[0].name
+                            )
+                          ) : (
+                            'No Votes Yet'
+                          )}
+                        </div>
+                      </div>
+                      <div className="admin-stat-card">
+                        <div className="stat-label">Audience Link</div>
+                        <div className="stat-val" style={{ fontSize: '14px', wordBreak: 'break-all' }}>
+                          /?page=vote
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Results Tally & Live Bar Chart */}
+                    <div className="admin-results-section">
+                      <div className="section-header-inline">
+                        <div>
+                          <h3 style={{ fontFamily: 'var(--font-serif)', fontSize: '22px', color: 'var(--maroon-900)' }}>
+                            Live Performer Vote Tally
+                          </h3>
+                          <p style={{ fontSize: '13px', color: 'var(--charcoal-600)' }}>
+                            Real-time private audience polling results with automated tie detection.
+                          </p>
+                        </div>
+                        <button
+                          className="btn-secondary"
+                          onClick={() => loadAdminVotingData()}
+                          style={{ padding: '6px 14px', fontSize: '12.5px' }}
+                        >
+                          🔄 Refresh Tally
+                        </button>
+                      </div>
+
+                      {adminVotingResults?.performers && adminVotingResults.performers.length > 0 ? (
+                        <div className="results-chart-container">
+                          {adminVotingResults.performers.map((p, idx) => {
+                            const total = adminVotingResults.totalVotes || 1;
+                            const pct = Math.round((p.voteCount / total) * 100);
+                            const isLeader = idx === 0 && p.voteCount > 0;
+                            return (
+                              <div key={p.id} className={`result-bar-card ${isLeader ? 'leader' : ''}`}>
+                                <div className="result-bar-header">
+                                  <div className="result-performer-meta">
+                                    <span className="result-rank">#{idx + 1}</span>
+                                    <strong className="result-name">{p.name}</strong>
+                                    <span className="result-cat">({p.category})</span>
+                                    {isLeader && <span className="leader-crown">🏆 Current Leader</span>}
+                                  </div>
+                                  <div className="result-vote-count">
+                                    <span className="vote-num">{p.voteCount}</span> votes
+                                    <span className="vote-pct">({pct}%)</span>
+                                  </div>
+                                </div>
+                                <div className="bar-track">
+                                  <div
+                                    className={`bar-fill ${isLeader ? 'leader-fill' : ''}`}
+                                    style={{ width: `${pct}%` }}
+                                  ></div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div style={{ textAlign: 'center', padding: '36px', background: '#fff', borderRadius: 'var(--radius-md)', border: '1px solid var(--cream-300)' }}>
+                          <p style={{ color: 'var(--charcoal-600)' }}>No audience votes recorded yet. Start voting and project the Stage QR code.</p>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Stage QR Code Preview Card */}
+                    <div className="stage-qr-preview-box">
+                      <div className="stage-qr-content">
+                        <div>
+                          <div className="section-eyebrow">STAGE AUDIENCE VOTING QR</div>
+                          <h4 style={{ fontFamily: 'var(--font-serif)', fontSize: '20px', color: 'var(--maroon-900)' }}>
+                            Permanent Voting QR Code
+                          </h4>
+                          <p style={{ fontSize: '13px', color: 'var(--charcoal-600)', marginBottom: '16px' }}>
+                            Show this on the venue screen or projector. Audience scans once to vote. Permanent URL remains unchanged.
+                          </p>
+                          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                            <button className="btn-primary" onClick={() => setStageFullscreenModal(true)}>
+                              📺 Launch Fullscreen Projector Mode
+                            </button>
+                            <button className="btn-secondary" onClick={downloadStageQrPng}>
+                              📥 Download High-Res PNG
+                            </button>
+                            <button className="btn-secondary" onClick={copyVotingLink}>
+                              🔗 Copy Direct Link
+                            </button>
+                          </div>
+                        </div>
+                        <div className="stage-qr-thumb">
+                          {stageQrDataUrl && (
+                            <img src={stageQrDataUrl} alt="Alfaaz Voting Stage QR" />
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 6: PERFORMER MANAGEMENT */}
+                {adminTab === 'performers' && (
+                  <div className="admin-performers-tab">
+                    <div className="admin-table-toolbar">
+                      <div>
+                        <h3 style={{ fontFamily: 'var(--font-serif)', fontSize: '22px', color: 'var(--maroon-900)' }}>
+                          Stage Performers Roster ({adminPerformers.length})
+                        </h3>
+                        <p style={{ fontSize: '13px', color: 'var(--charcoal-600)' }}>
+                          Add, edit, or deactivate performers. Active performers automatically appear on the voting page.
+                        </p>
+                      </div>
+                      <button className="btn-primary" onClick={openAddPerformerModal}>
+                        + Add New Performer
+                      </button>
+                    </div>
+
+                    <div className="table-responsive">
+                      <table className="admin-table">
+                        <thead>
+                          <tr>
+                            <th>Order</th>
+                            <th>Artist / Performer</th>
+                            <th>Category</th>
+                            <th>Description</th>
+                            <th>Voting Eligibility</th>
+                            <th>Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {adminPerformers.length === 0 ? (
+                            <tr>
+                              <td colSpan={6} style={{ textAlign: 'center', padding: '30px' }}>
+                                No performers added yet. Click <strong>+ Add New Performer</strong> above.
+                              </td>
+                            </tr>
+                          ) : (
+                            adminPerformers.map(p => (
+                              <tr key={p.id}>
+                                <td><strong>#{p.displayOrder}</strong></td>
+                                <td>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                    {p.photoUrl ? (
+                                      <img
+                                        src={p.photoUrl}
+                                        alt={p.name}
+                                        style={{ width: '38px', height: '38px', borderRadius: '50%', objectFit: 'cover' }}
+                                      />
+                                    ) : (
+                                      <div style={{ width: '38px', height: '38px', borderRadius: '50%', background: 'var(--maroon-900)', color: 'var(--gold-300)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '13px' }}>
+                                        {p.name.slice(0, 2).toUpperCase()}
+                                      </div>
+                                    )}
+                                    <strong>{p.name}</strong>
+                                  </div>
+                                </td>
+                                <td>
+                                  <span className="performer-category-pill">{p.category}</span>
+                                </td>
+                                <td style={{ maxWidth: '240px', fontSize: '12.5px', color: 'var(--charcoal-600)' }}>
+                                  {p.description || '—'}
+                                </td>
+                                <td>
+                                  {p.isActive ? (
+                                    <span className="status-pill verified">ACTIVE FOR VOTING</span>
+                                  ) : (
+                                    <span className="status-pill pending">DEACTIVATED</span>
+                                  )}
+                                </td>
+                                <td>
+                                  <div style={{ display: 'flex', gap: '6px' }}>
+                                    <button
+                                      className="btn-action primary-action"
+                                      style={{ padding: '4px 10px', fontSize: '11px' }}
+                                      onClick={() => openEditPerformerModal(p)}
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      className="btn-action"
+                                      style={{ padding: '4px 10px', fontSize: '11px', color: '#dc2626' }}
+                                      onClick={() => handleDeletePerformer(p.id, p.name)}
+                                    >
+                                      Delete
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ADD / EDIT PERFORMER MODAL */}
+            {performerModalOpen && (
+              <div className="modal-overlay" onClick={() => setPerformerModalOpen(false)}>
+                <div className="modal-dialog performer-edit-modal" onClick={e => e.stopPropagation()}>
+                  <div className="modal-icon-spark">🎤</div>
+                  <h3 className="modal-title">
+                    {editingPerformerId ? 'Edit Performer' : 'Register New Performer'}
+                  </h3>
+                  <p className="modal-subtitle">
+                    Performer will automatically be listed on the public audience voting page.
+                  </p>
+
+                  <form onSubmit={handleSavePerformer}>
+                    <div className="form-group">
+                      <label>Performer Full Name <span className="req">*</span></label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="e.g. Aarav Deshmukh"
+                        className="form-input"
+                        value={performerForm.name}
+                        onChange={e => setPerformerForm({ ...performerForm, name: e.target.value })}
+                      />
+                    </div>
+
+                    <div className="form-group">
+                      <label>Performance Category <span className="req">*</span></label>
+                      <select
+                        className="form-input"
+                        value={performerForm.category}
+                        onChange={e => setPerformerForm({ ...performerForm, category: e.target.value })}
+                      >
+                        <option value="Poetry & Shayari">Poetry &amp; Shayari</option>
+                        <option value="Stand-up Comedy">Stand-up Comedy</option>
+                        <option value="Acoustic Music">Acoustic Music</option>
+                        <option value="Storytelling">Storytelling</option>
+                        <option value="Urdu Ghazal">Urdu Ghazal</option>
+                        <option value="Singing / Vocals">Singing / Vocals</option>
+                        <option value="Other">Other</option>
+                      </select>
+                    </div>
+
+                    <div className="form-group">
+                      <label>Description (Optional piece title or intro)</label>
+                      <textarea
+                        rows={2}
+                        placeholder="Brief performance details or bio..."
+                        className="form-input"
+                        value={performerForm.description}
+                        onChange={e => setPerformerForm({ ...performerForm, description: e.target.value })}
+                      />
+                    </div>
+
+                    <div className="form-group">
+                      <label>Photo URL (Optional)</label>
+                      <input
+                        type="url"
+                        placeholder="https://..."
+                        className="form-input"
+                        value={performerForm.photoUrl}
+                        onChange={e => setPerformerForm({ ...performerForm, photoUrl: e.target.value })}
+                      />
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', marginBottom: '18px' }}>
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label>Display Order</label>
+                        <input
+                          type="number"
+                          min="1"
+                          className="form-input"
+                          value={performerForm.displayOrder}
+                          onChange={e => setPerformerForm({ ...performerForm, displayOrder: e.target.value })}
+                        />
+                      </div>
+                      <div className="form-group" style={{ marginBottom: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                        <label style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', marginTop: '16px' }}>
+                          <input
+                            type="checkbox"
+                            checked={performerForm.isActive}
+                            onChange={e => setPerformerForm({ ...performerForm, isActive: e.target.checked })}
+                          />
+                          <span>Eligible for Voting</span>
+                        </label>
+                      </div>
+                    </div>
+
+                    <div className="modal-btn-row">
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        onClick={() => setPerformerModalOpen(false)}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        className="btn-primary"
+                        disabled={isSavingPerformer}
+                      >
+                        {isSavingPerformer ? 'Saving...' : (editingPerformerId ? 'Update Performer' : 'Add to Voting List')}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+
+            {/* FULLSCREEN STAGE PRESENTATION PROJECTOR MODAL */}
+            {stageFullscreenModal && (
+              <div className="stage-fullscreen-overlay">
+                <button
+                  className="stage-exit-btn"
+                  onClick={() => setStageFullscreenModal(false)}
+                >
+                  ✕ Exit Fullscreen
+                </button>
+                <div className="stage-presentation-container">
+                  <div className="stage-presentation-badge">✦ LIVE ON STAGE ✦</div>
+                  <h1 className="stage-presentation-title">ALFAAZ AUDIENCE CHOICE AWARD</h1>
+                  <p className="stage-presentation-subtitle">
+                    Scan with your phone camera to cast your vote for your favourite performer
+                  </p>
+
+                  <div className="stage-qr-frame">
+                    {stageQrDataUrl && (
+                      <img src={stageQrDataUrl} alt="Scan to Vote QR" className="stage-qr-large" />
+                    )}
+                  </div>
+
+                  <div className="stage-presentation-url">
+                    <span>Scan stage QR or visit: </span>
+                    <strong>{window.location.host}/vote</strong>
+                  </div>
+
+                  <div className="stage-presentation-footer">
+                    <span>100% Anonymous</span> · <span>Single Vote Per Device</span> · <span>Beyond Temptation, Basmat</span>
+                  </div>
+                </div>
               </div>
             )}
           </div>

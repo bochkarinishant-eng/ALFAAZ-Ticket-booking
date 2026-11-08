@@ -32,6 +32,37 @@ export interface ActiveEvent {
   contactPhone: string;
   upiId: string;
   active: boolean;
+  votingStatus?: 'DRAFT' | 'OPEN' | 'CLOSED';
+  votingTitle?: string;
+  resultsRevealed?: boolean;
+  totalVotes?: number;
+  performerCount?: number;
+}
+
+export interface Performer {
+  id: string;
+  eventId?: string;
+  name: string;
+  category: string;
+  description?: string;
+  photoUrl?: string;
+  isActive: boolean;
+  displayOrder: number;
+  voteCount?: number;
+  percentage?: number;
+}
+
+export interface VotingResults {
+  eventId: string;
+  eventTitle: string;
+  votingTitle: string;
+  votingStatus: 'DRAFT' | 'OPEN' | 'CLOSED';
+  resultsRevealed: boolean;
+  totalVotes: number;
+  highestVotes: number;
+  isTie: boolean;
+  winnerCount: number;
+  performers: Performer[];
 }
 
 export interface BookingReserveResponse {
@@ -374,4 +405,235 @@ export async function adminExportCsv(token: string): Promise<Blob> {
   });
   if (!res.ok) throw new Error('Failed to export CSV');
   return await res.blob();
+}
+
+// ============================================================================
+// AUDIENCE CHOICE VOTING & PERFORMER MANAGEMENT
+// ============================================================================
+
+// A. Get Persistent Anonymous Voter Device Hash (Device-fingerprinted token)
+export async function getVoterDeviceHash(): Promise<string> {
+  let deviceId = localStorage.getItem('alfaaz_voter_device_id');
+  if (!deviceId) {
+    const arr = new Uint8Array(16);
+    crypto.getRandomValues(arr);
+    deviceId = Array.from(arr, b => b.toString(16).padStart(2, '0')).join('');
+    localStorage.setItem('alfaaz_voter_device_id', deviceId);
+  }
+
+  const enc = new TextEncoder();
+  const digest = await crypto.subtle.digest('SHA-256', enc.encode(`alfaaz_voter_${deviceId}`));
+  return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// B. Fetch Public Active Performers (For Voting Page)
+export async function getActivePerformers(eventId?: string): Promise<Performer[]> {
+  if (isSupabaseConfigured && supabase) {
+    try {
+      let query = supabase
+        .from('performers')
+        .select('*')
+        .eq('is_active', true)
+        .order('display_order', { ascending: true })
+        .order('name', { ascending: true });
+
+      if (eventId) {
+        query = query.eq('event_id', eventId);
+      }
+
+      const { data, error } = await query;
+      if (!error && data && data.length > 0) {
+        return data.map((p: any) => ({
+          id: p.id,
+          eventId: p.event_id,
+          name: p.name,
+          category: p.category,
+          description: p.description,
+          photoUrl: p.photo_url,
+          isActive: p.is_active,
+          displayOrder: p.display_order,
+        }));
+      }
+    } catch {
+      // Fallback
+    }
+  }
+
+  // Default sample performers for demo / fallback
+  return [
+    { id: 'p1', name: 'Aarav Deshmukh', category: 'Poetry & Shayari', description: 'Spoken word piece on memories of Basmat and modern love.', isActive: true, displayOrder: 1 },
+    { id: 'p2', name: 'Simran Kaur', category: 'Stand-up Comedy', description: 'Observational storytelling on small-town college life.', isActive: true, displayOrder: 2 },
+    { id: 'p3', name: 'Rohan Patil', category: 'Acoustic Music', description: 'Original Hindi indie melody on acoustic guitar.', isActive: true, displayOrder: 3 },
+    { id: 'p4', name: 'Pooja Sharma', category: 'Storytelling', description: 'Inspiring tale of discovering one’s voice through art.', isActive: true, displayOrder: 4 },
+    { id: 'p5', name: 'Zaid Qureshi', category: 'Urdu Ghazal', description: 'Classical and contemporary Nazms with soulful delivery.', isActive: true, displayOrder: 5 },
+  ];
+}
+
+// C. Submit Anonymous Vote
+export async function submitAudienceVote(eventId: string, performerId: string): Promise<{ success: boolean; message: string; performerName?: string }> {
+  const tokenHash = await getVoterDeviceHash();
+
+  if (isSupabaseConfigured && supabase) {
+    const { data, error } = await supabase.rpc('submit_vote', {
+      p_event_id: eventId,
+      p_performer_id: performerId,
+      p_voter_token_hash: tokenHash,
+    });
+
+    if (error) {
+      throw new Error(error.message || 'Failed to submit vote');
+    }
+
+    if (data && !data.success) {
+      throw new Error(data.error || 'Vote submission rejected');
+    }
+
+    localStorage.setItem(`alfaaz_voted_${eventId}`, performerId);
+    return data;
+  }
+
+  localStorage.setItem(`alfaaz_voted_${eventId}`, performerId);
+  return {
+    success: true,
+    message: 'Your vote has been recorded! Thank you for supporting the artists of Alfaaz.',
+  };
+}
+
+// D. Fetch Voting Results (Admin or when results are officially revealed)
+export async function getVotingResults(token: string, eventId: string): Promise<VotingResults> {
+  if (isSupabaseConfigured && supabase) {
+    const { data, error } = await supabase.rpc('get_voting_results', {
+      p_event_id: eventId,
+    });
+
+    if (!error && data && !data.error) {
+      return data as VotingResults;
+    }
+  }
+
+  return {
+    eventId,
+    eventTitle: 'Alfaaz Open Mic',
+    votingTitle: 'Alfaaz Audience Choice Award',
+    votingStatus: 'OPEN',
+    resultsRevealed: false,
+    totalVotes: 0,
+    highestVotes: 0,
+    isTie: false,
+    winnerCount: 0,
+    performers: [],
+  };
+}
+
+// E. Admin: Update Voting Status (Start / Close / Reveal)
+export async function adminUpdateVotingStatus(
+  token: string,
+  eventId: string,
+  status: 'DRAFT' | 'OPEN' | 'CLOSED',
+  resultsRevealed: boolean
+) {
+  if (isSupabaseConfigured && supabase) {
+    const { error } = await supabase
+      .from('events')
+      .update({
+        voting_status: status,
+        results_revealed: resultsRevealed,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', eventId);
+
+    if (error) throw new Error(error.message || 'Failed to update voting status');
+    return { success: true };
+  }
+  return { success: true };
+}
+
+// F. Admin: Performer Management (Create, Update, Delete)
+export async function adminGetPerformers(token: string, eventId: string): Promise<Performer[]> {
+  if (isSupabaseConfigured && supabase) {
+    const { data, error } = await supabase
+      .from('performers')
+      .select('*')
+      .eq('event_id', eventId)
+      .order('display_order', { ascending: true })
+      .order('name', { ascending: true });
+
+    if (!error && data) {
+      return data.map((p: any) => ({
+        id: p.id,
+        eventId: p.event_id,
+        name: p.name,
+        category: p.category,
+        description: p.description,
+        photoUrl: p.photo_url,
+        isActive: p.is_active,
+        displayOrder: p.display_order,
+      }));
+    }
+  }
+  return [];
+}
+
+export async function adminSavePerformer(
+  token: string,
+  performer: { id?: string; eventId: string; name: string; category: string; description?: string; photoUrl?: string; isActive: boolean; displayOrder?: number }
+) {
+  if (isSupabaseConfigured && supabase) {
+    const payload = {
+      event_id: performer.eventId,
+      name: performer.name.trim(),
+      category: performer.category.trim(),
+      description: performer.description?.trim() || null,
+      photo_url: performer.photoUrl?.trim() || null,
+      is_active: performer.isActive,
+      display_order: performer.displayOrder || 0,
+      updated_at: new Date().toISOString(),
+    };
+
+    if (performer.id) {
+      const { data, error } = await supabase
+        .from('performers')
+        .update(payload)
+        .eq('id', performer.id)
+        .select()
+        .single();
+      if (error) throw new Error(error.message || 'Failed to update performer');
+      return data;
+    } else {
+      const { data, error } = await supabase
+        .from('performers')
+        .insert(payload)
+        .select()
+        .single();
+      if (error) throw new Error(error.message || 'Failed to create performer');
+      return data;
+    }
+  }
+  return { success: true };
+}
+
+export async function adminDeletePerformer(token: string, performerId: string) {
+  if (isSupabaseConfigured && supabase) {
+    const { count } = await supabase
+      .from('votes')
+      .select('*', { count: 'exact', head: true })
+      .eq('performer_id', performerId);
+
+    if (count && count > 0) {
+      const { error } = await supabase
+        .from('performers')
+        .update({ is_active: false })
+        .eq('id', performerId);
+      if (error) throw new Error(error.message);
+      return { deactivated: true, message: 'Performer has recorded votes; deactivated to protect historical audit trail.' };
+    } else {
+      const { error } = await supabase
+        .from('performers')
+        .delete()
+        .eq('id', performerId);
+      if (error) throw new Error(error.message);
+      return { deleted: true, message: 'Performer deleted successfully.' };
+    }
+  }
+  return { success: true };
 }
