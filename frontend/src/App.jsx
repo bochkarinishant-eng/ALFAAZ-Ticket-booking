@@ -199,12 +199,17 @@ export default function App() {
   }, []);
 
   // Load active performers and local user ratings when on rating page
-  async function loadActivePerformers(eventId = event.id) {
+  async function loadActivePerformers(eventId = event.id, silent = false) {
     if (!eventId) return;
-    setLoadingPerformers(true);
+    // Only show full loading spinner on initial cold load when no performers are mounted
+    if (!silent && performers.length === 0) {
+      setLoadingPerformers(true);
+    }
     try {
       const list = await api.getActivePerformers(eventId);
-      setPerformers(list || []);
+      if (list && list.length > 0) {
+        setPerformers(list);
+      }
 
       // Load device's existing ratings across all performers
       const savedRatings = api.getUserRatingsForEvent(eventId);
@@ -234,8 +239,9 @@ export default function App() {
 
   useEffect(() => {
     if (page === 'vote') {
-      loadActivePerformers(event.id);
-      const timer = setInterval(() => loadActivePerformers(event.id), 3000);
+      loadActivePerformers(event.id, false);
+      // Background silent polling every 4 seconds without flickering or showing spinner
+      const timer = setInterval(() => loadActivePerformers(event.id, true), 4000);
       return () => clearInterval(timer);
     } else if (page === 'results') {
       loadPublicWinners(event.id);
