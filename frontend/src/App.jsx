@@ -995,70 +995,70 @@ export default function App() {
             <span className="hamburger-line bot"></span>
           </button>
         </div>
+      </header>
 
-        {/* Mobile Navigation Drawer */}
-        {mobileMenuOpen && (
-          <div className="mobile-nav-backdrop" onClick={() => setMobileMenuOpen(false)}>
-            <div className="mobile-nav-drawer" onClick={e => e.stopPropagation()}>
-              <div className="mobile-nav-header">
-                <span className="brand-monogram">ALFAAZ</span>
-                <button className="mobile-nav-close" onClick={() => setMobileMenuOpen(false)} aria-label="Close menu">✕</button>
-              </div>
-              <div className="mobile-nav-menu">
+      {/* Mobile Navigation Drawer (Rendered outside header to avoid backdrop-filter fixed positioning bugs) */}
+      {mobileMenuOpen && (
+        <div className="mobile-nav-backdrop" onClick={() => setMobileMenuOpen(false)}>
+          <div className="mobile-nav-drawer" onClick={e => e.stopPropagation()}>
+            <div className="mobile-nav-header">
+              <span className="brand-monogram">ALFAAZ</span>
+              <button className="mobile-nav-close" onClick={() => setMobileMenuOpen(false)} aria-label="Close menu">✕</button>
+            </div>
+            <div className="mobile-nav-menu">
+              <button
+                className={`mobile-nav-item ${page === 'home' ? 'active' : ''}`}
+                onClick={() => { setPage('home'); setMobileMenuOpen(false); window.scrollTo(0, 0); }}
+              >
+                <span className="mobile-nav-icon">🎙️</span>
+                <span>Event Details</span>
+              </button>
+              <button
+                className={`mobile-nav-item ${page === 'vote' ? 'active' : ''}`}
+                onClick={() => { setPage('vote'); setMobileMenuOpen(false); window.scrollTo(0, 0); }}
+              >
+                <span className="mobile-nav-icon">⭐</span>
+                <span>Rate Stage Performers</span>
+                {event.votingStatus === 'OPEN' && <span className="mobile-badge-live">LIVE</span>}
+              </button>
+              {event.resultsRevealed && (
                 <button
-                  className={`mobile-nav-item ${page === 'home' ? 'active' : ''}`}
-                  onClick={() => { setPage('home'); setMobileMenuOpen(false); window.scrollTo(0, 0); }}
+                  className={`mobile-nav-item ${page === 'results' ? 'active' : ''}`}
+                  onClick={() => { setPage('results'); setMobileMenuOpen(false); window.scrollTo(0, 0); }}
                 >
-                  <span className="mobile-nav-icon">🎙️</span>
-                  <span>Event Details</span>
+                  <span className="mobile-nav-icon">🏆</span>
+                  <span>Top 3 Winners</span>
                 </button>
-                <button
-                  className={`mobile-nav-item ${page === 'vote' ? 'active' : ''}`}
-                  onClick={() => { setPage('vote'); setMobileMenuOpen(false); window.scrollTo(0, 0); }}
-                >
-                  <span className="mobile-nav-icon">⭐</span>
-                  <span>Rate Stage Performers</span>
-                  {event.votingStatus === 'OPEN' && <span className="mobile-badge-live">LIVE</span>}
-                </button>
-                {event.resultsRevealed && (
-                  <button
-                    className={`mobile-nav-item ${page === 'results' ? 'active' : ''}`}
-                    onClick={() => { setPage('results'); setMobileMenuOpen(false); window.scrollTo(0, 0); }}
-                  >
-                    <span className="mobile-nav-icon">🏆</span>
-                    <span>Top 3 Winners</span>
-                  </button>
-                )}
-                <button
-                  className={`mobile-nav-item ${page === 'book' ? 'active' : ''}`}
-                  onClick={() => { setPage('book'); setMobileMenuOpen(false); window.scrollTo(0, 0); }}
-                >
-                  <span className="mobile-nav-icon">🎟️</span>
-                  <span>Book Pass · ₹100</span>
-                </button>
-                <button
-                  className={`mobile-nav-item ${page === 'myticket' ? 'active' : ''}`}
-                  onClick={() => { setPage('myticket'); setMobileMenuOpen(false); window.scrollTo(0, 0); }}
-                >
-                  <span className="mobile-nav-icon">📱</span>
-                  <span>Find My Ticket</span>
-                </button>
-                <button
-                  className={`mobile-nav-item ${page === 'admin' ? 'active' : ''}`}
-                  onClick={() => { setPage('admin'); setMobileMenuOpen(false); window.scrollTo(0, 0); }}
-                >
-                  <span className="mobile-nav-icon">🔒</span>
-                  <span>Admin Command</span>
-                </button>
-              </div>
-              <div className="mobile-nav-footer">
-                <p>9 Nov 2026 · Beyond Temptation, Basmat</p>
-                <p>Contact: +91 8624890246</p>
-              </div>
+              )}
+              <button
+                className={`mobile-nav-item ${page === 'book' ? 'active' : ''}`}
+                onClick={() => { setPage('book'); setMobileMenuOpen(false); window.scrollTo(0, 0); }}
+              >
+                <span className="mobile-nav-icon">🎟️</span>
+                <span>Book Pass · ₹100</span>
+              </button>
+              <button
+                className={`mobile-nav-item ${page === 'myticket' ? 'active' : ''}`}
+                onClick={() => { setPage('myticket'); setMobileMenuOpen(false); window.scrollTo(0, 0); }}
+              >
+                <span className="mobile-nav-icon">📱</span>
+                <span>Find My Ticket</span>
+              </button>
+              <button
+                className={`mobile-nav-item ${page === 'admin' ? 'active' : ''}`}
+                onClick={() => { setPage('admin'); setMobileMenuOpen(false); window.scrollTo(0, 0); }}
+              >
+                <span className="mobile-nav-icon">🔒</span>
+                <span>Admin Command</span>
+              </button>
+            </div>
+            <div className="mobile-nav-footer">
+              <p>9 Nov 2026 · Beyond Temptation, Basmat</p>
+              <p>Contact: +91 8624890246</p>
             </div>
           </div>
-        )}
-      </header>
+        </div>
+      )}
 
       <main>
         {/* ================= PAGE 1: LANDING PAGE ================= */}

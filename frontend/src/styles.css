@@ -1363,13 +1363,14 @@ main {
 
 .mobile-nav-backdrop {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(42, 10, 18, 0.55);
-  backdrop-filter: blur(6px);
-  z-index: 1000;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  background: rgba(42, 10, 18, 0.65);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  z-index: 999999;
   display: flex;
   justify-content: flex-end;
   animation: fadeIn 0.25s ease;
@@ -1378,15 +1379,18 @@ main {
 .mobile-nav-drawer {
   width: 82%;
   max-width: 320px;
-  height: 100%;
-  background: var(--ivory-surface);
+  height: 100vh;
+  height: 100dvh;
+  background: #FFFDF9;
   border-left: 1.5px solid var(--ivory-border);
-  box-shadow: -8px 0 32px rgba(74, 20, 34, 0.2);
+  box-shadow: -8px 0 32px rgba(74, 20, 34, 0.25);
   display: flex;
   flex-direction: column;
   padding: 24px 20px;
   animation: slideInRight 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  z-index: 1000000;
 }
 
 .mobile-nav-header {
