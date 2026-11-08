@@ -48,8 +48,42 @@ export interface Performer {
   photoUrl?: string;
   isActive: boolean;
   displayOrder: number;
+  performanceStatus?: 'UPCOMING' | 'PERFORMING' | 'COMPLETED';
+  ratingsEnabled?: boolean;
+  totalRatings?: number;
+  averageRating?: number;
   voteCount?: number;
   percentage?: number;
+}
+
+export interface PerformerRatingStat {
+  id: string;
+  name: string;
+  category: string;
+  description?: string;
+  photoUrl?: string;
+  displayOrder: number;
+  performanceStatus: 'UPCOMING' | 'PERFORMING' | 'COMPLETED';
+  ratingsEnabled: boolean;
+  totalRatings: number;
+  totalPoints: number;
+  averageRating: number;
+  rawAverage: number;
+  star1: number;
+  star2: number;
+  star3: number;
+  star4: number;
+  star5: number;
+}
+
+export interface Top3Winner {
+  id: string;
+  name: string;
+  category: string;
+  photoUrl?: string;
+  averageRating: number;
+  totalRatings: number;
+  rank: number;
 }
 
 export interface VotingResults {
@@ -58,11 +92,19 @@ export interface VotingResults {
   votingTitle: string;
   votingStatus: 'DRAFT' | 'OPEN' | 'CLOSED';
   resultsRevealed: boolean;
-  totalVotes: number;
-  highestVotes: number;
-  isTie: boolean;
-  winnerCount: number;
-  performers: Performer[];
+  winnersCalculated?: boolean;
+  winnerAwards?: {
+    first: string;
+    second: string;
+    third: string;
+  };
+  totalVotes?: number;
+  totalRatings?: number;
+  highestVotes?: number;
+  isTie?: boolean;
+  winnerCount?: number;
+  performers: any[];
+  top3Winners?: Top3Winner[];
 }
 
 export interface BookingReserveResponse {
@@ -426,7 +468,7 @@ export async function getVoterDeviceHash(): Promise<string> {
   return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
 }
 
-// B. Fetch Public Active Performers (For Voting Page)
+// B. Fetch Public Active Performers (For Rating & Voting Page)
 export async function getActivePerformers(eventId?: string): Promise<Performer[]> {
   if (isSupabaseConfigured && supabase) {
     try {
@@ -452,6 +494,8 @@ export async function getActivePerformers(eventId?: string): Promise<Performer[]
           photoUrl: p.photo_url,
           isActive: p.is_active,
           displayOrder: p.display_order,
+          performanceStatus: p.performance_status || 'COMPLETED',
+          ratingsEnabled: p.ratings_enabled ?? true,
         }));
       }
     } catch {
@@ -461,48 +505,83 @@ export async function getActivePerformers(eventId?: string): Promise<Performer[]
 
   // Default sample performers for demo / fallback
   return [
-    { id: 'p1', name: 'Aarav Deshmukh', category: 'Poetry & Shayari', description: 'Spoken word piece on memories of Basmat and modern love.', isActive: true, displayOrder: 1 },
-    { id: 'p2', name: 'Simran Kaur', category: 'Stand-up Comedy', description: 'Observational storytelling on small-town college life.', isActive: true, displayOrder: 2 },
-    { id: 'p3', name: 'Rohan Patil', category: 'Acoustic Music', description: 'Original Hindi indie melody on acoustic guitar.', isActive: true, displayOrder: 3 },
-    { id: 'p4', name: 'Pooja Sharma', category: 'Storytelling', description: 'Inspiring tale of discovering one’s voice through art.', isActive: true, displayOrder: 4 },
-    { id: 'p5', name: 'Zaid Qureshi', category: 'Urdu Ghazal', description: 'Classical and contemporary Nazms with soulful delivery.', isActive: true, displayOrder: 5 },
+    { id: 'p1', name: 'Aarav Deshmukh', category: 'Poetry & Shayari', description: 'Spoken word piece on memories of Basmat and modern love.', isActive: true, displayOrder: 1, performanceStatus: 'COMPLETED', ratingsEnabled: true },
+    { id: 'p2', name: 'Simran Kaur', category: 'Stand-up Comedy', description: 'Observational storytelling on small-town college life.', isActive: true, displayOrder: 2, performanceStatus: 'COMPLETED', ratingsEnabled: true },
+    { id: 'p3', name: 'Rohan Patil', category: 'Acoustic Music', description: 'Original Hindi indie melody on acoustic guitar.', isActive: true, displayOrder: 3, performanceStatus: 'PERFORMING', ratingsEnabled: true },
+    { id: 'p4', name: 'Pooja Sharma', category: 'Storytelling', description: 'Inspiring tale of discovering one’s voice through art.', isActive: true, displayOrder: 4, performanceStatus: 'UPCOMING', ratingsEnabled: false },
+    { id: 'p5', name: 'Zaid Qureshi', category: 'Urdu Ghazal', description: 'Classical and contemporary Nazms with soulful delivery.', isActive: true, displayOrder: 5, performanceStatus: 'UPCOMING', ratingsEnabled: false },
   ];
 }
 
-// C. Submit Anonymous Vote
-export async function submitAudienceVote(eventId: string, performerId: string): Promise<{ success: boolean; message: string; performerName?: string }> {
+// C. Local Storage helpers for tracking user submitted ratings per performer
+export function getUserRatingsForEvent(eventId: string): Record<string, number> {
+  const ratings: Record<string, number> = {};
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(`alfaaz_rating_${eventId}_`)) {
+        const perfId = key.replace(`alfaaz_rating_${eventId}_`, '');
+        const val = parseInt(localStorage.getItem(key) || '0', 10);
+        if (val >= 1 && val <= 5) {
+          ratings[perfId] = val;
+        }
+      }
+    }
+  } catch {
+    // Ignore storage errors
+  }
+  return ratings;
+}
+
+// D. Submit Performance Rating (1 to 5 Stars)
+export async function submitPerformerRating(
+  eventId: string,
+  performerId: string,
+  rating: number
+): Promise<{ success: boolean; message: string; performer_name?: string; rating?: number }> {
+  if (rating < 1 || rating > 5) {
+    throw new Error('Rating must be between 1 and 5 stars');
+  }
+
   const tokenHash = await getVoterDeviceHash();
 
   if (isSupabaseConfigured && supabase) {
-    const { data, error } = await supabase.rpc('submit_vote', {
+    const { data, error } = await supabase.rpc('submit_performer_rating', {
       p_event_id: eventId,
       p_performer_id: performerId,
       p_voter_token_hash: tokenHash,
+      p_rating: rating,
     });
 
     if (error) {
-      throw new Error(error.message || 'Failed to submit vote');
+      throw new Error(error.message || 'Failed to submit rating');
     }
 
     if (data && !data.success) {
-      throw new Error(data.error || 'Vote submission rejected');
+      throw new Error(data.error || 'Rating submission rejected');
     }
 
-    localStorage.setItem(`alfaaz_voted_${eventId}`, performerId);
+    localStorage.setItem(`alfaaz_rating_${eventId}_${performerId}`, rating.toString());
     return data;
   }
 
-  localStorage.setItem(`alfaaz_voted_${eventId}`, performerId);
+  localStorage.setItem(`alfaaz_rating_${eventId}_${performerId}`, rating.toString());
   return {
     success: true,
-    message: 'Your vote has been recorded! Thank you for supporting the artists of Alfaaz.',
+    message: 'Thank you! Your rating has been recorded.',
+    rating: rating,
   };
 }
 
-// D. Fetch Voting Results (Admin or when results are officially revealed)
-export async function getVotingResults(token: string, eventId: string): Promise<VotingResults> {
+// E. Backward-compatibility wrapper for single-vote calls
+export async function submitAudienceVote(eventId: string, performerId: string): Promise<{ success: boolean; message: string; performerName?: string }> {
+  return submitPerformerRating(eventId, performerId, 5);
+}
+
+// F. Fetch Admin Rating Results (Private Live Average Ratings & Top 3 Winners)
+export async function getAdminRatingResults(token: string, eventId: string): Promise<VotingResults> {
   if (isSupabaseConfigured && supabase) {
-    const { data, error } = await supabase.rpc('get_voting_results', {
+    const { data, error } = await supabase.rpc('get_admin_rating_results', {
       p_event_id: eventId,
     });
 
@@ -514,18 +593,127 @@ export async function getVotingResults(token: string, eventId: string): Promise<
   return {
     eventId,
     eventTitle: 'Alfaaz Open Mic',
-    votingTitle: 'Alfaaz Audience Choice Award',
+    votingTitle: 'Alfaaz Audience Performance Rating',
     votingStatus: 'OPEN',
     resultsRevealed: false,
-    totalVotes: 0,
-    highestVotes: 0,
-    isTie: false,
-    winnerCount: 0,
+    winnersCalculated: false,
+    winnerAwards: {
+      first: 'Alfaaz Star Performer',
+      second: 'Alfaaz Outstanding Performer',
+      third: 'Alfaaz Rising Performer'
+    },
+    totalRatings: 0,
     performers: [],
+    top3Winners: [],
   };
 }
 
-// E. Admin: Update Voting Status (Start / Close / Reveal)
+export async function getVotingResults(token: string, eventId: string): Promise<VotingResults> {
+  return getAdminRatingResults(token, eventId);
+}
+
+// G. Fetch Public Winners (Only accessible when admin reveals them)
+export async function getPublicWinners(eventId: string): Promise<{ revealed: boolean; winners?: Top3Winner[]; winnerAwards?: { first: string; second: string; third: string }; message?: string }> {
+  if (isSupabaseConfigured && supabase) {
+    const { data, error } = await supabase.rpc('get_public_winners', {
+      p_event_id: eventId,
+    });
+
+    if (!error && data) {
+      return data;
+    }
+  }
+
+  return {
+    revealed: false,
+    message: 'Winners will be announced live on stage.',
+  };
+}
+
+// H. Admin: Update Performer Stage Status & Rating Toggle
+export async function adminUpdatePerformerStageStatus(
+  token: string,
+  performerId: string,
+  status: 'UPCOMING' | 'PERFORMING' | 'COMPLETED',
+  ratingsEnabled: boolean
+) {
+  if (isSupabaseConfigured && supabase) {
+    const { error } = await supabase
+      .from('performers')
+      .update({
+        performance_status: status,
+        ratings_enabled: ratingsEnabled,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', performerId);
+
+    if (error) throw new Error(error.message || 'Failed to update performer status');
+    return { success: true };
+  }
+  return { success: true };
+}
+
+// I. Admin: Enable ratings for all completed performers at once
+export async function adminEnableAllCompletedRatings(token: string, eventId: string) {
+  if (isSupabaseConfigured && supabase) {
+    const { error } = await supabase
+      .from('performers')
+      .update({
+        ratings_enabled: true,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('event_id', eventId)
+      .eq('performance_status', 'COMPLETED');
+
+    if (error) throw new Error(error.message || 'Failed to enable ratings for completed performers');
+    return { success: true };
+  }
+  return { success: true };
+}
+
+// J. Admin: Calculate Winners (Finalize rankings after closing voting)
+export async function adminCalculateWinners(token: string, eventId: string) {
+  if (isSupabaseConfigured && supabase) {
+    const { error } = await supabase
+      .from('events')
+      .update({
+        winners_calculated: true,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', eventId);
+
+    if (error) throw new Error(error.message || 'Failed to finalize winner calculation');
+    return { success: true };
+  }
+  return { success: true };
+}
+
+// K. Admin: Update Award Titles
+export async function adminUpdateAwardTitles(
+  token: string,
+  eventId: string,
+  first: string,
+  second: string,
+  third: string
+) {
+  if (isSupabaseConfigured && supabase) {
+    const { error } = await supabase
+      .from('events')
+      .update({
+        winner_award_1: first.trim(),
+        winner_award_2: second.trim(),
+        winner_award_3: third.trim(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', eventId);
+
+    if (error) throw new Error(error.message || 'Failed to update award titles');
+    return { success: true };
+  }
+  return { success: true };
+}
+
+// L. Admin: Update Voting Status (Start / Close / Reveal)
 export async function adminUpdateVotingStatus(
   token: string,
   eventId: string,
@@ -548,7 +736,7 @@ export async function adminUpdateVotingStatus(
   return { success: true };
 }
 
-// F. Admin: Performer Management (Create, Update, Delete)
+// M. Admin: Performer Management (Create, Update, Delete)
 export async function adminGetPerformers(token: string, eventId: string): Promise<Performer[]> {
   if (isSupabaseConfigured && supabase) {
     const { data, error } = await supabase
@@ -568,6 +756,8 @@ export async function adminGetPerformers(token: string, eventId: string): Promis
         photoUrl: p.photo_url,
         isActive: p.is_active,
         displayOrder: p.display_order,
+        performanceStatus: p.performance_status || 'UPCOMING',
+        ratingsEnabled: p.ratings_enabled ?? false,
       }));
     }
   }
@@ -576,10 +766,21 @@ export async function adminGetPerformers(token: string, eventId: string): Promis
 
 export async function adminSavePerformer(
   token: string,
-  performer: { id?: string; eventId: string; name: string; category: string; description?: string; photoUrl?: string; isActive: boolean; displayOrder?: number }
+  performer: {
+    id?: string;
+    eventId: string;
+    name: string;
+    category: string;
+    description?: string;
+    photoUrl?: string;
+    isActive: boolean;
+    displayOrder?: number;
+    performanceStatus?: 'UPCOMING' | 'PERFORMING' | 'COMPLETED';
+    ratingsEnabled?: boolean;
+  }
 ) {
   if (isSupabaseConfigured && supabase) {
-    const payload = {
+    const payload: any = {
       event_id: performer.eventId,
       name: performer.name.trim(),
       category: performer.category.trim(),
@@ -587,6 +788,8 @@ export async function adminSavePerformer(
       photo_url: performer.photoUrl?.trim() || null,
       is_active: performer.isActive,
       display_order: performer.displayOrder || 0,
+      performance_status: performer.performanceStatus || 'UPCOMING',
+      ratings_enabled: performer.ratingsEnabled ?? false,
       updated_at: new Date().toISOString(),
     };
 
@@ -615,7 +818,7 @@ export async function adminSavePerformer(
 export async function adminDeletePerformer(token: string, performerId: string) {
   if (isSupabaseConfigured && supabase) {
     const { count } = await supabase
-      .from('votes')
+      .from('performance_ratings')
       .select('*', { count: 'exact', head: true })
       .eq('performer_id', performerId);
 
@@ -625,7 +828,7 @@ export async function adminDeletePerformer(token: string, performerId: string) {
         .update({ is_active: false })
         .eq('id', performerId);
       if (error) throw new Error(error.message);
-      return { deactivated: true, message: 'Performer has recorded votes; deactivated to protect historical audit trail.' };
+      return { deactivated: true, message: 'Performer has recorded audience ratings; marked inactive to protect audit log.' };
     } else {
       const { error } = await supabase
         .from('performers')

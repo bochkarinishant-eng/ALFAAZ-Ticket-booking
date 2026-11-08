@@ -90,17 +90,21 @@ VITE_RAZORPAY_KEY_ID=rzp_test_xxxxxxxxxx
 
 ---
 
-## 6. Audience Choice Voting System Setup (SQL Editor)
+## 6. Audience Performance Rating & Top 3 Winner Calculation Setup (SQL Editor)
 
-To enable the **Alfaaz Audience Choice Award** voting system, open your **Supabase Dashboard** $\rightarrow$ **SQL Editor** $\rightarrow$ **New Query**, paste the contents of `supabase/migrations/20261108000001_audience_voting.sql`, and click **Run**:
+To enable the **Alfaaz Audience Performance Rating System** and **Top 3 Winner Calculation**, open your **Supabase Dashboard** $\rightarrow$ **SQL Editor** $\rightarrow$ **New Query**, paste the contents of `supabase/migrations/20261108000002_performance_rating_system.sql`, and click **Run**:
 
 ```sql
--- 1. ADD VOTING CONTROLS TO EVENTS
+-- 1. UPDATE EVENTS TABLE FOR RATINGS & AWARDS
 ALTER TABLE public.events ADD COLUMN IF NOT EXISTS voting_status TEXT NOT NULL DEFAULT 'DRAFT';
-ALTER TABLE public.events ADD COLUMN IF NOT EXISTS voting_title TEXT NOT NULL DEFAULT 'Alfaaz Audience Choice Award';
+ALTER TABLE public.events ADD COLUMN IF NOT EXISTS voting_title TEXT NOT NULL DEFAULT 'Alfaaz Audience Performance Rating';
 ALTER TABLE public.events ADD COLUMN IF NOT EXISTS results_revealed BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE public.events ADD COLUMN IF NOT EXISTS winners_calculated BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE public.events ADD COLUMN IF NOT EXISTS winner_award_1 TEXT NOT NULL DEFAULT 'Alfaaz Star Performer';
+ALTER TABLE public.events ADD COLUMN IF NOT EXISTS winner_award_2 TEXT NOT NULL DEFAULT 'Alfaaz Outstanding Performer';
+ALTER TABLE public.events ADD COLUMN IF NOT EXISTS winner_award_3 TEXT NOT NULL DEFAULT 'Alfaaz Rising Performer';
 
--- 2. CREATE PERFORMERS TABLE
+-- 2. UPDATE OR CREATE PERFORMERS TABLE WITH PERFORMANCE STAGE STATUS
 CREATE TABLE IF NOT EXISTS public.performers (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   event_id UUID NOT NULL REFERENCES public.events(id) ON DELETE CASCADE,
@@ -114,49 +118,40 @@ CREATE TABLE IF NOT EXISTS public.performers (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- 3. CREATE VOTES TABLE (ANONYMOUS & CRYPTOGRAPHIC DEVICE TOKEN LOCK)
-CREATE TABLE IF NOT EXISTS public.votes (
+ALTER TABLE public.performers ADD COLUMN IF NOT EXISTS performance_status TEXT NOT NULL DEFAULT 'UPCOMING';
+ALTER TABLE public.performers ADD COLUMN IF NOT EXISTS ratings_enabled BOOLEAN NOT NULL DEFAULT false;
+
+-- 3. CREATE PERFORMANCE RATINGS TABLE (1-5 STARS PER PERFORMER PER DEVICE)
+CREATE TABLE IF NOT EXISTS public.performance_ratings (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   event_id UUID NOT NULL REFERENCES public.events(id) ON DELETE CASCADE,
   performer_id UUID NOT NULL REFERENCES public.performers(id) ON DELETE CASCADE,
   voter_token_hash TEXT NOT NULL,
+  rating INT NOT NULL CHECK (rating >= 1 AND rating <= 5),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CONSTRAINT uq_event_voter UNIQUE (event_id, voter_token_hash)
+  CONSTRAINT uq_event_performer_voter UNIQUE (event_id, performer_id, voter_token_hash)
 );
 
-CREATE INDEX IF NOT EXISTS idx_performers_event ON public.performers(event_id, is_active, display_order);
-CREATE INDEX IF NOT EXISTS idx_votes_event ON public.votes(event_id);
-CREATE INDEX IF NOT EXISTS idx_votes_performer ON public.votes(performer_id);
-CREATE INDEX IF NOT EXISTS idx_votes_token ON public.votes(event_id, voter_token_hash);
+CREATE INDEX IF NOT EXISTS idx_ratings_event_perf ON public.performance_ratings(event_id, performer_id);
+CREATE INDEX IF NOT EXISTS idx_ratings_token ON public.performance_ratings(event_id, performer_id, voter_token_hash);
+CREATE INDEX IF NOT EXISTS idx_performers_status ON public.performers(event_id, performance_status, ratings_enabled);
 
--- 4. ENABLE RLS POLICIES
-ALTER TABLE public.performers ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.votes ENABLE ROW LEVEL SECURITY;
+-- 4. ROW LEVEL SECURITY
+ALTER TABLE public.performance_ratings ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS "Public can view active performers" ON public.performers;
-CREATE POLICY "Public can view active performers"
-  ON public.performers FOR SELECT
-  USING (is_active = true);
-
-DROP POLICY IF EXISTS "Admins have full access to performers" ON public.performers;
-CREATE POLICY "Admins have full access to performers"
-  ON public.performers FOR ALL
+DROP POLICY IF EXISTS "Admins have full access to ratings" ON public.performance_ratings;
+CREATE POLICY "Admins have full access to ratings"
+  ON public.performance_ratings FOR ALL
   TO authenticated
   USING (public.is_admin())
   WITH CHECK (public.is_admin());
 
-DROP POLICY IF EXISTS "Admins have full access to votes" ON public.votes;
-CREATE POLICY "Admins have full access to votes"
-  ON public.votes FOR ALL
-  TO authenticated
-  USING (public.is_admin())
-  WITH CHECK (public.is_admin());
-
--- 5. ATOMIC VOTE SUBMISSION FUNCTION
-CREATE OR REPLACE FUNCTION public.submit_vote(
+-- 5. SECURE ATOMIC RATING SUBMISSION FUNCTION
+CREATE OR REPLACE FUNCTION public.submit_performer_rating(
   p_event_id UUID,
   p_performer_id UUID,
-  p_voter_token_hash TEXT
+  p_voter_token_hash TEXT,
+  p_rating INT
 )
 RETURNS JSONB
 LANGUAGE plpgsql
@@ -167,8 +162,12 @@ DECLARE
   v_event public.events%ROWTYPE;
   v_performer public.performers%ROWTYPE;
 BEGIN
+  IF p_rating IS NULL OR p_rating < 1 OR p_rating > 5 THEN
+    RETURN jsonb_build_object('success', false, 'error', 'Rating must be an integer between 1 and 5 stars.');
+  END IF;
+
   IF p_voter_token_hash IS NULL OR trim(p_voter_token_hash) = '' THEN
-    RETURN jsonb_build_object('success', false, 'error', 'Invalid device voting token');
+    RETURN jsonb_build_object('success', false, 'error', 'Invalid device rating token');
   END IF;
 
   SELECT * INTO v_event FROM public.events WHERE id = p_event_id;
@@ -177,33 +176,50 @@ BEGIN
   END IF;
 
   IF v_event.voting_status != 'OPEN' THEN
-    RETURN jsonb_build_object('success', false, 'error', 'Voting is currently closed for this event.');
+    RETURN jsonb_build_object('success', false, 'error', 'Audience rating is currently closed for this event.');
   END IF;
 
-  SELECT * INTO v_performer FROM public.performers WHERE id = p_performer_id AND event_id = p_event_id AND is_active = true;
+  SELECT * INTO v_performer
+  FROM public.performers
+  WHERE id = p_performer_id AND event_id = p_event_id AND is_active = true;
+
   IF NOT FOUND THEN
-    RETURN jsonb_build_object('success', false, 'error', 'Selected performer is not eligible for voting');
+    RETURN jsonb_build_object('success', false, 'error', 'Performer not found or not active');
   END IF;
 
-  IF EXISTS (SELECT 1 FROM public.votes WHERE event_id = p_event_id AND voter_token_hash = p_voter_token_hash) THEN
-    RETURN jsonb_build_object('success', false, 'error', 'This device has already cast a vote for this event.');
+  IF NOT v_performer.ratings_enabled THEN
+    RETURN jsonb_build_object(
+      'success', false,
+      'error', 'Rating is not yet enabled for ' || v_performer.name || '. Please wait until their performance is completed!'
+    );
   END IF;
 
-  INSERT INTO public.votes (event_id, performer_id, voter_token_hash)
-  VALUES (p_event_id, p_performer_id, p_voter_token_hash);
+  IF EXISTS (
+    SELECT 1 FROM public.performance_ratings
+    WHERE event_id = p_event_id
+      AND performer_id = p_performer_id
+      AND voter_token_hash = p_voter_token_hash
+  ) THEN
+    RETURN jsonb_build_object('success', false, 'error', 'You have already submitted a rating for ' || v_performer.name || '.');
+  END IF;
+
+  INSERT INTO public.performance_ratings (event_id, performer_id, voter_token_hash, rating)
+  VALUES (p_event_id, p_performer_id, p_voter_token_hash, p_rating);
 
   RETURN jsonb_build_object(
     'success', true,
-    'message', 'Your vote has been recorded! Thank you for supporting the artists of Alfaaz.',
-    'performer_name', v_performer.name
+    'message', 'Thank you! Your rating for ' || v_performer.name || ' has been recorded.',
+    'performer_id', v_performer.id,
+    'performer_name', v_performer.name,
+    'rating', p_rating
   );
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.submit_vote(UUID, UUID, TEXT) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.submit_performer_rating(UUID, UUID, TEXT, INT) TO anon, authenticated;
 
--- 6. PRIVATE RESULTS AGGREGATION & TIE DETECTION FUNCTION
-CREATE OR REPLACE FUNCTION public.get_voting_results(p_event_id UUID)
+-- 6. PRIVATE ADMIN RESULTS AGGREGATION & TOP 3 WINNER CALCULATION
+CREATE OR REPLACE FUNCTION public.get_admin_rating_results(p_event_id UUID)
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -212,10 +228,9 @@ AS $$
 DECLARE
   v_event public.events%ROWTYPE;
   v_is_admin BOOLEAN := false;
-  v_total_votes INT := 0;
-  v_highest_votes INT := 0;
-  v_winner_count INT := 0;
+  v_total_ratings INT := 0;
   v_performers_json JSONB;
+  v_top3_json JSONB;
 BEGIN
   SELECT * INTO v_event FROM public.events WHERE id = p_event_id;
   IF NOT FOUND THEN
@@ -228,15 +243,13 @@ BEGIN
     v_is_admin := false;
   END;
 
-  IF NOT v_is_admin AND NOT v_event.results_revealed THEN
-    RETURN jsonb_build_object(
-      'error', 'Voting results are private and will be announced by the host on stage.'
-    );
+  IF NOT v_is_admin THEN
+    RETURN jsonb_build_object('error', 'Unauthorized. Admin access required.');
   END IF;
 
-  SELECT count(*) INTO v_total_votes FROM public.votes WHERE event_id = p_event_id;
+  SELECT count(*) INTO v_total_ratings FROM public.performance_ratings WHERE event_id = p_event_id;
 
-  SELECT COALESCE(jsonb_agg(sub.perf_record), '[]'::jsonb)
+  SELECT COALESCE(jsonb_agg(perf_stat), '[]'::jsonb)
   INTO v_performers_json
   FROM (
     SELECT jsonb_build_object(
@@ -245,33 +258,49 @@ BEGIN
       'category', p.category,
       'description', p.description,
       'photoUrl', p.photo_url,
-      'voteCount', count(v.id),
-      'displayOrder', p.display_order
-    ) AS perf_record
+      'displayOrder', p.display_order,
+      'performanceStatus', p.performance_status,
+      'ratingsEnabled', p.ratings_enabled,
+      'totalRatings', count(r.id),
+      'totalPoints', COALESCE(sum(r.rating), 0),
+      'averageRating', CASE WHEN count(r.id) > 0 THEN round(avg(r.rating)::numeric, 2) ELSE 0.00 END,
+      'rawAverage', CASE WHEN count(r.id) > 0 THEN avg(r.rating) ELSE 0.00 END,
+      'star1', count(r.id) FILTER (WHERE r.rating = 1),
+      'star2', count(r.id) FILTER (WHERE r.rating = 2),
+      'star3', count(r.id) FILTER (WHERE r.rating = 3),
+      'star4', count(r.id) FILTER (WHERE r.rating = 4),
+      'star5', count(r.id) FILTER (WHERE r.rating = 5)
+    ) AS perf_stat
     FROM public.performers p
-    LEFT JOIN public.votes v ON v.performer_id = p.id AND v.event_id = p.event_id
+    LEFT JOIN public.performance_ratings r ON r.performer_id = p.id AND r.event_id = p.event_id
     WHERE p.event_id = p_event_id AND p.is_active = true
-    GROUP BY p.id, p.name, p.category, p.description, p.photo_url, p.display_order
-    ORDER BY count(v.id) DESC, p.display_order ASC
+    GROUP BY p.id, p.name, p.category, p.description, p.photo_url, p.display_order, p.performance_status, p.ratings_enabled
+    ORDER BY
+      CASE WHEN count(r.id) > 0 THEN avg(r.rating) ELSE 0 END DESC,
+      count(r.id) DESC,
+      p.display_order ASC
   ) sub;
 
-  IF v_total_votes > 0 THEN
-    SELECT count(v.id) INTO v_highest_votes
-    FROM public.votes v
-    WHERE v.event_id = p_event_id
-    GROUP BY v.performer_id
-    ORDER BY count(v.id) DESC
-    LIMIT 1;
-
-    SELECT count(*) INTO v_winner_count
-    FROM (
-      SELECT performer_id
-      FROM public.votes
-      WHERE event_id = p_event_id
-      GROUP BY performer_id
-      HAVING count(*) = v_highest_votes
-    ) winners;
-  END IF;
+  SELECT COALESCE(jsonb_agg(top_row), '[]'::jsonb)
+  INTO v_top3_json
+  FROM (
+    SELECT
+      p.id,
+      p.name,
+      p.category,
+      p.photo_url AS "photoUrl",
+      count(r.id) AS "totalRatings",
+      round(avg(r.rating)::numeric, 2) AS "averageRating",
+      avg(r.rating) AS "rawAverage",
+      RANK() OVER (ORDER BY avg(r.rating) DESC, count(r.id) DESC) as "rank"
+    FROM public.performers p
+    JOIN public.performance_ratings r ON r.performer_id = p.id AND r.event_id = p.event_id
+    WHERE p.event_id = p_event_id AND p.is_active = true
+    GROUP BY p.id, p.name, p.category, p.photo_url
+    HAVING count(r.id) > 0
+    ORDER BY avg(r.rating) DESC, count(r.id) DESC
+    LIMIT 3
+  ) top_row;
 
   RETURN jsonb_build_object(
     'eventId', v_event.id,
@@ -279,16 +308,79 @@ BEGIN
     'votingTitle', v_event.voting_title,
     'votingStatus', v_event.voting_status,
     'resultsRevealed', v_event.results_revealed,
-    'totalVotes', v_total_votes,
-    'highestVotes', v_highest_votes,
-    'isTie', (v_winner_count > 1),
-    'winnerCount', v_winner_count,
-    'performers', v_performers_json
+    'winnersCalculated', v_event.winners_calculated,
+    'winnerAwards', jsonb_build_object(
+      'first', v_event.winner_award_1,
+      'second', v_event.winner_award_2,
+      'third', v_event.winner_award_3
+    ),
+    'totalRatings', v_total_ratings,
+    'performers', v_performers_json,
+    'top3Winners', v_top3_json
   );
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.get_voting_results(UUID) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.get_admin_rating_results(UUID) TO authenticated;
+
+-- 7. PUBLIC WINNER CEREMONY FUNCTION (REVEALED ONLY WHEN ADMIN TOGGLES)
+CREATE OR REPLACE FUNCTION public.get_public_winners(p_event_id UUID)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_event public.events%ROWTYPE;
+  v_top3_json JSONB;
+BEGIN
+  SELECT * INTO v_event FROM public.events WHERE id = p_event_id;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('error', 'Event not found');
+  END IF;
+
+  IF NOT v_event.results_revealed THEN
+    RETURN jsonb_build_object(
+      'revealed', false,
+      'message', 'Winners have not been announced yet. Stay tuned!'
+    );
+  END IF;
+
+  SELECT COALESCE(jsonb_agg(top_row), '[]'::jsonb)
+  INTO v_top3_json
+  FROM (
+    SELECT
+      p.id,
+      p.name,
+      p.category,
+      p.photo_url AS "photoUrl",
+      round(avg(r.rating)::numeric, 2) AS "averageRating",
+      count(r.id) AS "totalRatings",
+      DENSE_RANK() OVER (ORDER BY avg(r.rating) DESC, count(r.id) DESC) as "rank"
+    FROM public.performers p
+    JOIN public.performance_ratings r ON r.performer_id = p.id AND r.event_id = p.event_id
+    WHERE p.event_id = p_event_id AND p.is_active = true
+    GROUP BY p.id, p.name, p.category, p.photo_url
+    HAVING count(r.id) > 0
+    ORDER BY avg(r.rating) DESC, count(r.id) DESC
+    LIMIT 3
+  ) top_row;
+
+  RETURN jsonb_build_object(
+    'revealed', true,
+    'eventId', v_event.id,
+    'eventTitle', v_event.title,
+    'winnerAwards', jsonb_build_object(
+      'first', v_event.winner_award_1,
+      'second', v_event.winner_award_2,
+      'third', v_event.winner_award_3
+    ),
+    'winners', v_top3_json
+  );
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.get_public_winners(UUID) TO anon, authenticated;
 ```
 
 ---

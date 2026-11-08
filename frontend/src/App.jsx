@@ -86,22 +86,37 @@ export default function App() {
   // Mobile Navigation State
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // Audience Choice Voting State (Public)
+  // Audience Performance Rating State (Public)
   const [performers, setPerformers] = useState([]);
   const [loadingPerformers, setLoadingPerformers] = useState(false);
-  const [selectedPerformerId, setSelectedPerformerId] = useState(null);
-  const [showVoteConfirmModal, setShowVoteConfirmModal] = useState(false);
-  const [isSubmittingVote, setIsSubmittingVote] = useState(false);
-  const [hasVoted, setHasVoted] = useState(false);
-  const [votedPerformerName, setVotedPerformerName] = useState('');
+  const [userRatings, setUserRatings] = useState({}); // performerId -> number (1-5)
+  const [pendingRatings, setPendingRatings] = useState({}); // performerId -> selected rating
+  const [hoverStars, setHoverStars] = useState({}); // performerId -> hovered rating
+  const [submittingPerformerId, setSubmittingPerformerId] = useState(null);
+  const [publicWinnersData, setPublicWinnersData] = useState(null);
+
+  // Rating Scale Definition
+  const RATING_SCALE = {
+    1: 'Needs Improvement',
+    2: 'Fair',
+    3: 'Good',
+    4: 'Excellent',
+    5: 'Outstanding'
+  };
 
   // Admin Voting & Performer Management State
   const [adminVotingResults, setAdminVotingResults] = useState(null);
   const [adminPerformers, setAdminPerformers] = useState([]);
   const [stageQrDataUrl, setStageQrDataUrl] = useState('');
   const [stageFullscreenModal, setStageFullscreenModal] = useState(false);
+  const [ceremonyFullscreenModal, setCeremonyFullscreenModal] = useState(false);
   const [performerModalOpen, setPerformerModalOpen] = useState(false);
   const [editingPerformerId, setEditingPerformerId] = useState(null);
+  const [awardTitles, setAwardTitles] = useState({
+    first: 'Alfaaz Star Performer',
+    second: 'Alfaaz Outstanding Performer',
+    third: 'Alfaaz Rising Performer'
+  });
   const [performerForm, setPerformerForm] = useState({
     name: '',
     category: 'Poetry & Shayari',
@@ -109,6 +124,8 @@ export default function App() {
     photoUrl: '',
     isActive: true,
     displayOrder: 1,
+    performanceStatus: 'UPCOMING',
+    ratingsEnabled: false
   });
   const [isSavingPerformer, setIsSavingPerformer] = useState(false);
 
@@ -146,6 +163,8 @@ export default function App() {
       loadTicketByAccessKey(ticketKey);
     } else if (targetPage === 'vote' || path === '/vote') {
       setPage('vote');
+    } else if (targetPage === 'results' || path === '/results') {
+      setPage('results');
     } else if (targetPage === 'scanner') {
       const token = sessionStorage.getItem('alfaaz_admin_token');
       if (token) {
@@ -179,7 +198,7 @@ export default function App() {
       .catch(() => {});
   }, []);
 
-  // Load active performers when on voting page or event changes
+  // Load active performers and local user ratings when on rating page
   async function loadActivePerformers(eventId = event.id) {
     if (!eventId) return;
     setLoadingPerformers(true);
@@ -187,15 +206,9 @@ export default function App() {
       const list = await api.getActivePerformers(eventId);
       setPerformers(list || []);
 
-      // Check if this device already voted
-      const storedPerformerId = localStorage.getItem(`alfaaz_voted_${eventId}`);
-      if (storedPerformerId) {
-        setHasVoted(true);
-        const match = (list || []).find(p => p.id === storedPerformerId);
-        if (match) {
-          setVotedPerformerName(match.name);
-        }
-      }
+      // Load device's existing ratings across all performers
+      const savedRatings = api.getUserRatingsForEvent(eventId);
+      setUserRatings(savedRatings);
     } catch {
       // offline fallback
     } finally {
@@ -203,9 +216,27 @@ export default function App() {
     }
   }
 
+  // Load public winners data when on results page
+  async function loadPublicWinners(eventId = event.id) {
+    if (!eventId) return;
+    try {
+      const data = await api.getPublicWinners(eventId);
+      if (data) {
+        setPublicWinnersData(data);
+        if (data.winnerAwards) {
+          setAwardTitles(data.winnerAwards);
+        }
+      }
+    } catch {
+      // offline fallback
+    }
+  }
+
   useEffect(() => {
     if (page === 'vote') {
       loadActivePerformers(event.id);
+    } else if (page === 'results') {
+      loadPublicWinners(event.id);
     }
   }, [page, event.id]);
 
@@ -625,34 +656,39 @@ export default function App() {
     }
   }
 
-  // ================= AUDIENCE VOTING HANDLERS =================
-  async function handleConfirmVote() {
-    if (!selectedPerformerId || !event.id) return;
-    const target = performers.find(p => p.id === selectedPerformerId);
-    setIsSubmittingVote(true);
+  // ================= AUDIENCE PERFORMANCE RATING HANDLERS =================
+  async function handleSubmitPerformerRating(performerId, rating) {
+    if (!rating || rating < 1 || rating > 5) {
+      showNotice('Please tap a star rating from 1 to 5.', 'info');
+      return;
+    }
+    const target = performers.find(p => p.id === performerId);
+    setSubmittingPerformerId(performerId);
     try {
-      const res = await api.submitAudienceVote(event.id, selectedPerformerId);
-      setHasVoted(true);
-      setVotedPerformerName(target ? target.name : 'Selected Performer');
-      setShowVoteConfirmModal(false);
-      showNotice(res.message || 'Thank you! Your vote has been officially recorded.', 'success');
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      const res = await api.submitPerformerRating(event.id, performerId, rating);
+      setUserRatings(prev => ({ ...prev, [performerId]: rating }));
+      showNotice(res.message || `Rating of ${rating}★ submitted for ${target?.name || 'artist'}!`, 'success');
     } catch (err) {
-      showNotice(err.message || 'Unable to submit vote. Please try again.', 'error');
+      showNotice(err.message || 'Unable to submit rating. Please try again.', 'error');
     } finally {
-      setIsSubmittingVote(false);
+      setSubmittingPerformerId(null);
     }
   }
 
-  // Admin Voting Data Polling
+  // Admin Rating & Winner Polling
   async function loadAdminVotingData(token = adminToken, eventId = event.id) {
     if (!token || !eventId) return;
     try {
       const [results, perfs] = await Promise.all([
-        api.getVotingResults(token, eventId),
+        api.getAdminRatingResults(token, eventId),
         api.adminGetPerformers(token, eventId)
       ]);
-      if (results) setAdminVotingResults(results);
+      if (results) {
+        setAdminVotingResults(results);
+        if (results.winnerAwards) {
+          setAwardTitles(results.winnerAwards);
+        }
+      }
       if (perfs) setAdminPerformers(perfs);
     } catch {
       // offline or silent retry
@@ -662,7 +698,7 @@ export default function App() {
   useEffect(() => {
     if (page === 'admin' && adminToken && (adminTab === 'voting' || adminTab === 'performers')) {
       loadAdminVotingData(adminToken, event.id);
-      const timer = setInterval(() => loadAdminVotingData(adminToken, event.id), 6000);
+      const timer = setInterval(() => loadAdminVotingData(adminToken, event.id), 5000);
       return () => clearInterval(timer);
     }
   }, [page, adminToken, adminTab, event.id]);
@@ -671,11 +707,11 @@ export default function App() {
     try {
       await api.adminUpdateVotingStatus(adminToken, event.id, newStatus, event.resultsRevealed || false);
       setEvent(prev => ({ ...prev, votingStatus: newStatus }));
-      showNotice(`Voting status set to: ${newStatus}`, 'success');
+      showNotice(`Audience rating status set to: ${newStatus}`, 'success');
       loadAdminVotingData(adminToken, event.id);
       loadEventDetails();
     } catch (err) {
-      showNotice(err.message || 'Failed to change voting status', 'error');
+      showNotice(err.message || 'Failed to change rating status', 'error');
     }
   }
 
@@ -684,11 +720,69 @@ export default function App() {
     try {
       await api.adminUpdateVotingStatus(adminToken, event.id, event.votingStatus || 'OPEN', nextRevealed);
       setEvent(prev => ({ ...prev, resultsRevealed: nextRevealed }));
-      showNotice(nextRevealed ? 'Winner is now revealed on public voting page!' : 'Winner hidden from public', 'info');
+      showNotice(nextRevealed ? 'Top 3 Winners are now officially revealed to the public!' : 'Results hidden from public', 'info');
       loadAdminVotingData(adminToken, event.id);
+      loadPublicWinners(event.id);
       loadEventDetails();
     } catch (err) {
       showNotice(err.message || 'Failed to update winner reveal status', 'error');
+    }
+  }
+
+  async function handleCalculateWinners() {
+    try {
+      await api.adminCalculateWinners(adminToken, event.id);
+      setEvent(prev => ({ ...prev, winnersCalculated: true }));
+      showNotice('Top 3 Winners calculated and finalized from valid audience ratings!', 'success');
+      loadAdminVotingData(adminToken, event.id);
+    } catch (err) {
+      showNotice(err.message || 'Failed to calculate winners', 'error');
+    }
+  }
+
+  async function handleEnableAllCompletedRatings() {
+    try {
+      await api.adminEnableAllCompletedRatings(adminToken, event.id);
+      showNotice('Audience ratings enabled for all Completed performers!', 'success');
+      loadAdminVotingData(adminToken, event.id);
+      loadActivePerformers(event.id);
+    } catch (err) {
+      showNotice(err.message || 'Failed to enable ratings', 'error');
+    }
+  }
+
+  async function handleTogglePerformerStageStatus(performerId, newStatus, currentRatingsEnabled) {
+    try {
+      // Automatically enable ratings if marked completed, or keep status
+      const autoEnableRating = newStatus === 'COMPLETED' ? true : currentRatingsEnabled;
+      await api.adminUpdatePerformerStageStatus(adminToken, performerId, newStatus, autoEnableRating);
+      showNotice(`Performer marked as: ${newStatus}`, 'success');
+      loadAdminVotingData(adminToken, event.id);
+      loadActivePerformers(event.id);
+    } catch (err) {
+      showNotice(err.message || 'Failed to update performer stage status', 'error');
+    }
+  }
+
+  async function handleTogglePerformerRatingsEnabled(performerId, currentStatus, newRatingsEnabled) {
+    try {
+      await api.adminUpdatePerformerStageStatus(adminToken, performerId, currentStatus, newRatingsEnabled);
+      showNotice(newRatingsEnabled ? 'Audience rating enabled for performer' : 'Audience rating paused', 'info');
+      loadAdminVotingData(adminToken, event.id);
+      loadActivePerformers(event.id);
+    } catch (err) {
+      showNotice(err.message || 'Failed to toggle ratings', 'error');
+    }
+  }
+
+  async function handleSaveAwardTitles(e) {
+    e.preventDefault();
+    try {
+      await api.adminUpdateAwardTitles(adminToken, event.id, awardTitles.first, awardTitles.second, awardTitles.third);
+      showNotice('Winner award titles saved successfully!', 'success');
+      loadAdminVotingData(adminToken, event.id);
+    } catch (err) {
+      showNotice(err.message || 'Failed to save award titles', 'error');
     }
   }
 
@@ -700,7 +794,9 @@ export default function App() {
       description: '',
       photoUrl: '',
       isActive: true,
-      displayOrder: (adminPerformers.length + 1)
+      displayOrder: (adminPerformers.length + 1),
+      performanceStatus: 'UPCOMING',
+      ratingsEnabled: false
     });
     setPerformerModalOpen(true);
   }
@@ -713,7 +809,9 @@ export default function App() {
       description: p.description || '',
       photoUrl: p.photoUrl || '',
       isActive: p.isActive,
-      displayOrder: p.displayOrder || 1
+      displayOrder: p.displayOrder || 1,
+      performanceStatus: p.performanceStatus || 'UPCOMING',
+      ratingsEnabled: p.ratingsEnabled ?? false
     });
     setPerformerModalOpen(true);
   }
@@ -734,7 +832,9 @@ export default function App() {
         description: performerForm.description?.trim() || '',
         photoUrl: performerForm.photoUrl?.trim() || '',
         isActive: performerForm.isActive,
-        displayOrder: Number(performerForm.displayOrder) || 1
+        displayOrder: Number(performerForm.displayOrder) || 1,
+        performanceStatus: performerForm.performanceStatus || 'UPCOMING',
+        ratingsEnabled: performerForm.ratingsEnabled ?? false
       });
       showNotice(editingPerformerId ? 'Performer updated!' : 'Performer registered successfully!', 'success');
       setPerformerModalOpen(false);
@@ -748,7 +848,7 @@ export default function App() {
   }
 
   async function handleDeletePerformer(performerId, performerName) {
-    if (!confirm(`Are you sure you want to remove ${performerName}? If votes already exist, they will be deactivated.`)) return;
+    if (!confirm(`Are you sure you want to remove ${performerName}? If ratings already exist, they will be deactivated.`)) return;
     try {
       const res = await api.adminDeletePerformer(adminToken, performerId);
       showNotice(res.message || 'Performer updated', 'info');
@@ -763,7 +863,7 @@ export default function App() {
     if (!stageQrDataUrl) return;
     const link = document.createElement('a');
     link.href = stageQrDataUrl;
-    link.download = 'Alfaaz-Audience-Voting-Stage-QR.png';
+    link.download = 'Alfaaz-Audience-Rating-Stage-QR.png';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -772,7 +872,14 @@ export default function App() {
   function copyVotingLink() {
     const url = `${window.location.origin}/?page=vote`;
     navigator.clipboard.writeText(url).then(() => {
-      showNotice('Audience voting URL copied to clipboard!', 'success');
+      showNotice('Audience rating URL copied to clipboard!', 'success');
+    });
+  }
+
+  function copyResultsLink() {
+    const url = `${window.location.origin}/?page=results`;
+    navigator.clipboard.writeText(url).then(() => {
+      showNotice('Winner results announcement URL copied!', 'success');
     });
   }
 
@@ -827,8 +934,13 @@ export default function App() {
           <nav className="nav-links">
             <button className={`nav-btn ${page === 'home' ? 'active' : ''}`} onClick={() => { setPage('home'); window.scrollTo(0, 0); }}>Event</button>
             <button className={`nav-btn ${page === 'vote' ? 'active' : ''}`} onClick={() => { setPage('vote'); window.scrollTo(0, 0); }}>
-              Audience Vote {event.votingStatus === 'OPEN' ? <span className="nav-live-dot" title="Voting is Live!"></span> : null}
+              Rate Performers {event.votingStatus === 'OPEN' ? <span className="nav-live-dot" title="Rating is Live!"></span> : null}
             </button>
+            {event.resultsRevealed && (
+              <button className={`nav-btn ${page === 'results' ? 'active' : ''}`} style={{ color: '#b45309', fontWeight: 700 }} onClick={() => { setPage('results'); window.scrollTo(0, 0); }}>
+                🏆 Top 3 Winners
+              </button>
+            )}
             <button className={`nav-btn ${page === 'myticket' ? 'active' : ''}`} onClick={() => { setPage('myticket'); window.scrollTo(0, 0); }}>Find My Ticket</button>
             <button className={`nav-btn ${page === 'admin' ? 'active' : ''}`} onClick={() => { setPage('admin'); window.scrollTo(0, 0); }}>Admin Login</button>
             <button className="nav-cta" onClick={() => { setPage('book'); window.scrollTo(0, 0); }}>Book Pass · ₹100</button>
@@ -867,10 +979,19 @@ export default function App() {
                   className={`mobile-nav-item ${page === 'vote' ? 'active' : ''}`}
                   onClick={() => { setPage('vote'); setMobileMenuOpen(false); window.scrollTo(0, 0); }}
                 >
-                  <span className="mobile-nav-icon">🏆</span>
-                  <span>Audience Choice Voting</span>
+                  <span className="mobile-nav-icon">⭐</span>
+                  <span>Rate Stage Performers</span>
                   {event.votingStatus === 'OPEN' && <span className="mobile-badge-live">LIVE</span>}
                 </button>
+                {event.resultsRevealed && (
+                  <button
+                    className={`mobile-nav-item ${page === 'results' ? 'active' : ''}`}
+                    onClick={() => { setPage('results'); setMobileMenuOpen(false); window.scrollTo(0, 0); }}
+                  >
+                    <span className="mobile-nav-icon">🏆</span>
+                    <span>Top 3 Winners</span>
+                  </button>
+                )}
                 <button
                   className={`mobile-nav-item ${page === 'book' ? 'active' : ''}`}
                   onClick={() => { setPage('book'); setMobileMenuOpen(false); window.scrollTo(0, 0); }}
@@ -1596,196 +1717,338 @@ export default function App() {
           </div>
         )}
 
-        {/* ================= PAGE: ALFAAZ AUDIENCE CHOICE VOTING ================= */}
+        {/* ================= PAGE: ALFAAZ AUDIENCE PERFORMANCE RATING ================= */}
         {page === 'vote' && (
           <div className="section voting-page-container">
             {/* Page Header */}
             <div className="voting-header">
-              <div className="section-eyebrow">STAGE AUDIENCE POLL</div>
-              <h1 className="voting-title">ALFAAZ AUDIENCE CHOICE AWARD</h1>
-              <p className="voting-subtitle">Your Voice. Your Favourite Performer.</p>
+              <div className="section-eyebrow">STAGE PERFORMANCE RATING</div>
+              <h1 className="voting-title">ALFAAZ AUDIENCE PERFORMANCE RATING</h1>
+              <p className="voting-subtitle">Celebrate Every Performance. Rate Every Talent.</p>
 
               {/* Status Badges */}
               <div className="voting-status-wrap">
                 {event.votingStatus === 'OPEN' ? (
                   <span className="voting-badge live">
-                    <span className="live-dot-pulse"></span> VOTING IS LIVE
+                    <span className="live-dot-pulse"></span> AUDIENCE RATINGS ACTIVE
                   </span>
                 ) : event.votingStatus === 'CLOSED' ? (
                   <span className="voting-badge closed">
-                    🔒 VOTING CONCLUDED
+                    🔒 RATINGS CONCLUDED
                   </span>
                 ) : (
                   <span className="voting-badge draft">
-                    ⏳ VOTING OPENS SOON
+                    ⏳ RATINGS OPEN SOON
                   </span>
                 )}
               </div>
             </div>
 
-            {/* WINNER REVEAL BANNER (Only displayed if admin explicitly toggles results_revealed = true) */}
+            {/* FAIRNESS & PRIVACY NOTICE */}
+            <div className="rating-privacy-banner">
+              <div className="privacy-badge-icon">🛡️</div>
+              <div>
+                <strong>Anonymous &amp; Fair:</strong> Your rating is anonymous. Your individual rating will not be visible to other audience members. Rate each performer once after their stage performance!
+              </div>
+            </div>
+
+            {/* QUICK LINK TO RESULTS IF REVEALED */}
             {event.resultsRevealed && (
-              <div className="winner-announcement-card">
-                <div className="winner-crown-icon">🏆</div>
-                <div className="winner-eyebrow">AUDIENCE CHOICE WINNER</div>
-                <h2 className="winner-name">
-                  {adminVotingResults?.isTie
-                    ? `Co-Winners (${adminVotingResults.winnerCount}-Way Tie)`
-                    : (adminVotingResults?.performers?.[0]?.name || 'Official Winner Announced!')}
-                </h2>
-                <p className="winner-sub">
-                  Chosen by the live audience at Beyond Temptation, Basmat.
-                </p>
+              <div className="winner-banner-cta" onClick={() => { setPage('results'); window.scrollTo(0, 0); }}>
+                <span className="cta-trophy">🏆</span>
+                <div>
+                  <strong>Official Winners Announced!</strong>
+                  <p>Click here to view the Top 3 Alfaaz Star Performers on the podium →</p>
+                </div>
               </div>
             )}
 
-            {/* IF ALREADY VOTED ON THIS DEVICE */}
-            {hasVoted ? (
-              <div className="voted-success-card">
-                <div className="voted-icon-check">✓</div>
-                <h3>Thank You For Voting!</h3>
-                <p className="voted-message">
-                  Your anonymous vote {votedPerformerName ? <>for <strong>{votedPerformerName}</strong> </> : ''}has been securely recorded.
-                </p>
-                <div className="voted-privacy-note">
-                  <span>🔒</span> Each audience device is permitted one vote to ensure absolute fairness. Sit back and enjoy the performances!
-                </div>
-                <div className="voted-actions">
-                  <button className="btn-secondary" onClick={() => { setPage('home'); window.scrollTo(0, 0); }}>
-                    ← Back to Event
-                  </button>
-                  <button className="btn-primary" onClick={() => { setPage('book'); window.scrollTo(0, 0); }}>
-                    Book Another Pass · ₹100
-                  </button>
-                </div>
+            {/* PERFORMER RATING CARDS */}
+            {loadingPerformers ? (
+              <div className="loading-spinner-wrap">
+                <div className="gold-spinner"></div>
+                <p>Loading stage performers...</p>
               </div>
-            ) : event.votingStatus !== 'OPEN' ? (
-              /* VOTING NOT LIVE NOTICE */
-              <div className="voting-inactive-card">
-                <div className="inactive-icon">{event.votingStatus === 'CLOSED' ? '🔒' : '⏳'}</div>
-                <h3>{event.votingStatus === 'CLOSED' ? 'Voting is Now Closed' : 'Voting Has Not Started Yet'}</h3>
-                <p>
-                  {event.votingStatus === 'CLOSED'
-                    ? 'The host has concluded audience voting. Results will be announced on stage shortly!'
-                    : 'The stage host will open voting during the open mic performances. Please keep this page open!'}
-                </p>
-                <button className="btn-secondary" onClick={() => { setPage('home'); window.scrollTo(0, 0); }}>
-                  View Event Overview
-                </button>
+            ) : performers.length === 0 ? (
+              <div className="no-performers-card">
+                <p>No performers are registered yet. Please check back shortly!</p>
               </div>
             ) : (
-              /* ACTIVE VOTING PERFORMER SELECTION */
-              <div>
-                <div className="performer-selection-guide">
-                  <p>Tap your favourite performer below to select, then click <strong>Submit Vote</strong>. No registration required.</p>
-                </div>
+              <div className="performers-rating-list">
+                {performers.map((p) => {
+                  const hasUserRated = Boolean(userRatings[p.id]);
+                  const userRatingVal = userRatings[p.id] || 0;
+                  const isRatingEnabled = event.votingStatus === 'OPEN' && p.ratingsEnabled && p.performanceStatus !== 'UPCOMING';
+                  const currentSelected = pendingRatings[p.id] || 0;
+                  const currentHover = hoverStars[p.id] || 0;
+                  const activeStarDisplay = currentHover || currentSelected;
 
-                {loadingPerformers ? (
-                  <div className="loading-spinner-wrap">
-                    <div className="gold-spinner"></div>
-                    <p>Loading stage performers...</p>
-                  </div>
-                ) : performers.length === 0 ? (
-                  <div className="no-performers-card">
-                    <p>No performers are registered yet. Please check back shortly!</p>
-                  </div>
-                ) : (
-                  <div className="performers-grid">
-                    {performers.map((p) => {
-                      const isSelected = selectedPerformerId === p.id;
-                      return (
-                        <div
-                          key={p.id}
-                          className={`performer-card ${isSelected ? 'selected' : ''}`}
-                          onClick={() => setSelectedPerformerId(p.id)}
-                          role="button"
-                          tabIndex={0}
-                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setSelectedPerformerId(p.id); }}
-                        >
-                          <div className="performer-card-inner">
-                            <div className="performer-avatar-wrap">
-                              {p.photoUrl ? (
-                                <img src={p.photoUrl} alt={p.name} className="performer-photo" />
-                              ) : (
-                                <div className="performer-initials-avatar">
-                                  {p.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
-                                </div>
-                              )}
-                              <div className={`selection-indicator ${isSelected ? 'active' : ''}`}>
-                                {isSelected ? '✓' : ''}
-                              </div>
+                  return (
+                    <div
+                      key={p.id}
+                      className={`performer-rating-card ${hasUserRated ? 'rated' : ''} ${p.performanceStatus === 'PERFORMING' ? 'now-performing' : ''}`}
+                    >
+                      <div className="card-top-row">
+                        <div className="performer-avatar-wrap">
+                          {p.photoUrl ? (
+                            <img src={p.photoUrl} alt={p.name} className="performer-photo" />
+                          ) : (
+                            <div className="performer-initials-avatar">
+                              {p.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
                             </div>
-                            <div className="performer-details">
-                              <span className="performer-category-pill">{p.category}</span>
-                              <h3 className="performer-name">{p.name}</h3>
-                              {p.description && (
-                                <p className="performer-desc">{p.description}</p>
-                              )}
+                          )}
+                        </div>
+
+                        <div className="performer-main-info">
+                          <div className="status-and-cat">
+                            <span className="performer-category-pill">{p.category}</span>
+                            {p.performanceStatus === 'PERFORMING' && (
+                              <span className="stage-badge live-now">
+                                <span className="live-dot-pulse"></span> Performing Now
+                              </span>
+                            )}
+                            {p.performanceStatus === 'COMPLETED' && (
+                              <span className="stage-badge completed">✓ Completed</span>
+                            )}
+                            {p.performanceStatus === 'UPCOMING' && (
+                              <span className="stage-badge upcoming">⏳ Upcoming</span>
+                            )}
+                          </div>
+                          <h3 className="performer-name">{p.name}</h3>
+                          {p.description && (
+                            <p className="performer-desc">{p.description}</p>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* RATING INTERFACE / STATUS */}
+                      <div className="card-rating-section">
+                        {hasUserRated ? (
+                          /* ALREADY SUBMITTED STATE */
+                          <div className="rating-submitted-box">
+                            <div className="submitted-header">
+                              <span className="green-check">✓</span>
+                              <strong>Your rating has been submitted</strong>
+                            </div>
+                            <div className="user-stars-row">
+                              {[1, 2, 3, 4, 5].map((s) => (
+                                <span key={s} className={`star-gold ${s <= userRatingVal ? 'filled' : 'empty'}`}>
+                                  ★
+                                </span>
+                              ))}
+                              <span className="scale-text">
+                                {userRatingVal} Stars — {RATING_SCALE[userRatingVal]}
+                              </span>
                             </div>
                           </div>
+                        ) : !isRatingEnabled ? (
+                          /* RATING NOT YET ENABLED OR UPCOMING */
+                          <div className="rating-locked-box">
+                            <span className="lock-icon">
+                              {p.performanceStatus === 'UPCOMING' ? '⏳' : '⏸️'}
+                            </span>
+                            <span>
+                              {p.performanceStatus === 'UPCOMING'
+                                ? 'Rating will open after performance begins'
+                                : (event.votingStatus !== 'OPEN'
+                                    ? 'Audience rating is currently closed'
+                                    : 'Rating for this artist will be enabled shortly')}
+                            </span>
+                          </div>
+                        ) : (
+                          /* ACTIVE 5-STAR RATING COMPONENT */
+                          <div className="rating-interactive-box">
+                            <div className="rate-prompt">Rate this performance (out of 5):</div>
+
+                            <div className="star-rating-control">
+                              {[1, 2, 3, 4, 5].map((star) => {
+                                const isFilled = activeStarDisplay >= star;
+                                return (
+                                  <button
+                                    key={star}
+                                    type="button"
+                                    className={`interactive-star-btn ${isFilled ? 'active' : ''}`}
+                                    onClick={() => setPendingRatings(prev => ({ ...prev, [p.id]: star }))}
+                                    onMouseEnter={() => setHoverStars(prev => ({ ...prev, [p.id]: star }))}
+                                    onMouseLeave={() => setHoverStars(prev => ({ ...prev, [p.id]: 0 }))}
+                                    aria-label={`Rate ${star} Stars`}
+                                  >
+                                    ★
+                                  </button>
+                                );
+                              })}
+                            </div>
+
+                            {activeStarDisplay > 0 ? (
+                              <div className="rating-label-preview">
+                                {activeStarDisplay} Star{activeStarDisplay > 1 ? 's' : ''} — <strong>{RATING_SCALE[activeStarDisplay]}</strong>
+                              </div>
+                            ) : (
+                              <div className="rating-label-preview hint">
+                                Tap 1 to 5 stars above to rate
+                              </div>
+                            )}
+
+                            <button
+                              type="button"
+                              className="btn-primary btn-submit-star"
+                              disabled={!currentSelected || submittingPerformerId === p.id}
+                              onClick={() => handleSubmitPerformerRating(p.id, currentSelected)}
+                            >
+                              {submittingPerformerId === p.id
+                                ? 'Submitting...'
+                                : (currentSelected
+                                    ? `Submit ${currentSelected}★ Rating for ${p.name}`
+                                    : 'Select Stars to Submit')}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ================= PAGE: DEDICATED WINNER ANNOUNCEMENT SCREEN (/results) ================= */}
+        {page === 'results' && (
+          <div className="section results-page-container">
+            <div className="results-header">
+              <div className="section-eyebrow">STAGE CEREMONY AWARDS</div>
+              <h1 className="results-title">ALFAAZ AUDIENCE CHOICE AWARDS</h1>
+              <p className="results-subtitle">Top 3 Performance Winners · Chosen by the Audience</p>
+            </div>
+
+            {!event.resultsRevealed ? (
+              /* RESULTS NOT YET REVEALED */
+              <div className="results-locked-card">
+                <div className="locked-trophy-icon">🏆</div>
+                <h2>Winners Sealed by Host</h2>
+                <p>
+                  The audience performance ratings are currently being tallied. The Top 3 winners will be announced on the stage screen momentarily!
+                </p>
+                <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', marginTop: '20px' }}>
+                  <button className="btn-secondary" onClick={() => { setPage('vote'); window.scrollTo(0, 0); }}>
+                    ← Back to Performance Ratings
+                  </button>
+                  <button className="btn-secondary" onClick={() => loadPublicWinners()}>
+                    🔄 Check Again
+                  </button>
+                </div>
+              </div>
+            ) : (
+              /* PODIUM STYLE WINNER CELEBRATION */
+              <div className="winner-podium-wrapper">
+                <div className="winner-celebration-badge">✦ OFFICIAL CEREMONY WINNERS ✦</div>
+
+                {publicWinnersData?.winners && publicWinnersData.winners.length > 0 ? (
+                  <div className="podium-grid">
+                    {/* 2ND PLACE (SILVER / LEFT) */}
+                    {publicWinnersData.winners.length >= 2 && (
+                      <div className="podium-col rank-2">
+                        <div className="podium-card silver">
+                          <div className="medal-badge silver-badge">2ND PLACE</div>
+                          <div className="award-title">
+                            {awardTitles.second || 'Alfaaz Outstanding Performer'}
+                          </div>
+                          <div className="winner-avatar-frame silver-frame">
+                            {publicWinnersData.winners[1].photoUrl ? (
+                              <img src={publicWinnersData.winners[1].photoUrl} alt={publicWinnersData.winners[1].name} />
+                            ) : (
+                              <div className="winner-placeholder-avatar">
+                                {publicWinnersData.winners[1].name.slice(0, 2).toUpperCase()}
+                              </div>
+                            )}
+                          </div>
+                          <h3 className="winner-artist-name">{publicWinnersData.winners[1].name}</h3>
+                          <span className="winner-artist-cat">{publicWinnersData.winners[1].category}</span>
+                          <div className="winner-avg-score">
+                            <span className="score-val">{Number(publicWinnersData.winners[1].averageRating).toFixed(2)}</span>
+                            <span className="score-max">/ 5.00</span>
+                          </div>
+                          <div className="winner-rating-count">
+                            {publicWinnersData.winners[1].totalRatings} audience ratings
+                          </div>
                         </div>
-                      );
-                    })}
+                      </div>
+                    )}
+
+                    {/* 1ST PLACE (GOLD / CENTER ELEVATED) */}
+                    {publicWinnersData.winners.length >= 1 && (
+                      <div className="podium-col rank-1">
+                        <div className="podium-card gold elevated">
+                          <div className="crown-ornament">👑</div>
+                          <div className="medal-badge gold-badge">1ST PLACE · STAR PERFORMER</div>
+                          <div className="award-title gold-title">
+                            {awardTitles.first || 'Alfaaz Star Performer'}
+                          </div>
+                          <div className="winner-avatar-frame gold-frame">
+                            {publicWinnersData.winners[0].photoUrl ? (
+                              <img src={publicWinnersData.winners[0].photoUrl} alt={publicWinnersData.winners[0].name} />
+                            ) : (
+                              <div className="winner-placeholder-avatar gold-bg">
+                                {publicWinnersData.winners[0].name.slice(0, 2).toUpperCase()}
+                              </div>
+                            )}
+                          </div>
+                          <h2 className="winner-artist-name gold-name">{publicWinnersData.winners[0].name}</h2>
+                          <span className="winner-artist-cat">{publicWinnersData.winners[0].category}</span>
+                          <div className="winner-avg-score gold-score">
+                            <span className="score-val">{Number(publicWinnersData.winners[0].averageRating).toFixed(2)}</span>
+                            <span className="score-max">/ 5.00</span>
+                          </div>
+                          <div className="winner-rating-count">
+                            {publicWinnersData.winners[0].totalRatings} audience ratings
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 3RD PLACE (BRONZE / RIGHT) */}
+                    {publicWinnersData.winners.length >= 3 && (
+                      <div className="podium-col rank-3">
+                        <div className="podium-card bronze">
+                          <div className="medal-badge bronze-badge">3RD PLACE</div>
+                          <div className="award-title">
+                            {awardTitles.third || 'Alfaaz Rising Performer'}
+                          </div>
+                          <div className="winner-avatar-frame bronze-frame">
+                            {publicWinnersData.winners[2].photoUrl ? (
+                              <img src={publicWinnersData.winners[2].photoUrl} alt={publicWinnersData.winners[2].name} />
+                            ) : (
+                              <div className="winner-placeholder-avatar">
+                                {publicWinnersData.winners[2].name.slice(0, 2).toUpperCase()}
+                              </div>
+                            )}
+                          </div>
+                          <h3 className="winner-artist-name">{publicWinnersData.winners[2].name}</h3>
+                          <span className="winner-artist-cat">{publicWinnersData.winners[2].category}</span>
+                          <div className="winner-avg-score">
+                            <span className="score-val">{Number(publicWinnersData.winners[2].averageRating).toFixed(2)}</span>
+                            <span className="score-max">/ 5.00</span>
+                          </div>
+                          <div className="winner-rating-count">
+                            {publicWinnersData.winners[2].totalRatings} audience ratings
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{ textAlign: 'center', padding: '40px', background: 'rgba(255,255,255,0.05)', borderRadius: 'var(--radius-lg)' }}>
+                    <p style={{ color: 'var(--muted-gold-light)' }}>No valid ratings recorded yet to determine winners.</p>
                   </div>
                 )}
 
-                {/* SUBMIT BUTTON BAR */}
-                <div className="voting-action-bar">
-                  <button
-                    className="btn-primary btn-submit-vote"
-                    disabled={!selectedPerformerId || isSubmittingVote}
-                    onClick={() => setShowVoteConfirmModal(true)}
-                  >
-                    <span>
-                      {selectedPerformerId
-                        ? `Vote for ${performers.find(p => p.id === selectedPerformerId)?.name} →`
-                        : 'Select a Performer Above'}
-                    </span>
+                <div className="results-bottom-actions">
+                  <button className="btn-secondary" onClick={() => { setPage('vote'); window.scrollTo(0, 0); }}>
+                    ← Back to Performance Ratings
                   </button>
-                  <div className="voting-disclaimer">
-                    <span>🛡️</span> 100% Anonymous. Single vote per device enforced.
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* CONFIRMATION MODAL */}
-            {showVoteConfirmModal && selectedPerformerId && (
-              <div className="modal-overlay" onClick={() => setShowVoteConfirmModal(false)}>
-                <div className="modal-dialog vote-confirm-modal" onClick={e => e.stopPropagation()}>
-                  <div className="modal-icon-spark">✦</div>
-                  <h3 className="modal-title">Confirm Your Vote</h3>
-                  <p className="modal-subtitle">You are about to cast your vote for:</p>
-                  
-                  <div className="modal-target-performer">
-                    <span className="target-category">
-                      {performers.find(p => p.id === selectedPerformerId)?.category}
-                    </span>
-                    <div className="target-name">
-                      {performers.find(p => p.id === selectedPerformerId)?.name}
-                    </div>
-                  </div>
-
-                  <p className="modal-warning">
-                    ⚠️ Each device can only vote <strong>once</strong>. Once submitted, your choice cannot be altered.
-                  </p>
-
-                  <div className="modal-btn-row">
-                    <button
-                      className="btn-secondary"
-                      disabled={isSubmittingVote}
-                      onClick={() => setShowVoteConfirmModal(false)}
-                    >
-                      Change Choice
-                    </button>
-                    <button
-                      className="btn-primary"
-                      disabled={isSubmittingVote}
-                      onClick={handleConfirmVote}
-                    >
-                      {isSubmittingVote ? 'Submitting...' : 'Confirm Vote ✓'}
-                    </button>
-                  </div>
+                  <button className="btn-secondary" onClick={() => { setPage('home'); window.scrollTo(0, 0); }}>
+                    Event Home
+                  </button>
                 </div>
               </div>
             )}
@@ -2222,17 +2485,20 @@ export default function App() {
                   </div>
                 )}
 
-                {/* TAB 5: AUDIENCE VOTING & REAL-TIME RESULTS */}
+                {/* TAB 5: AUDIENCE PERFORMANCE RATINGS & LIVE RESULTS */}
                 {adminTab === 'voting' && (
                   <div className="admin-voting-tab">
                     {/* Control Bar */}
                     <div className="admin-voting-controls">
                       <div className="voting-status-indicator-group">
                         <span className={`status-pill ${event.votingStatus === 'OPEN' ? 'live' : event.votingStatus === 'CLOSED' ? 'rejected' : 'pending'}`}>
-                          STATUS: {event.votingStatus || 'DRAFT'}
+                          RATINGS: {event.votingStatus || 'DRAFT'}
+                        </span>
+                        <span className={`status-pill ${event.winnersCalculated ? 'verified' : 'pending'}`}>
+                          WINNERS: {event.winnersCalculated ? 'CALCULATED & RANKED' : 'PENDING CALCULATION'}
                         </span>
                         <span className={`status-pill ${event.resultsRevealed ? 'verified' : 'pending'}`}>
-                          WINNER: {event.resultsRevealed ? 'REVEALED TO PUBLIC' : 'HIDDEN FROM PUBLIC'}
+                          PUBLIC: {event.resultsRevealed ? 'REVEALED ON /results' : 'HIDDEN FROM PUBLIC'}
                         </span>
                       </div>
 
@@ -2242,7 +2508,7 @@ export default function App() {
                             className="btn-action primary-action"
                             onClick={() => handleToggleVotingStatus('OPEN')}
                           >
-                            ▶️ Start / Reopen Voting
+                            ▶️ Start / Reopen Ratings
                           </button>
                         ) : (
                           <button
@@ -2250,81 +2516,155 @@ export default function App() {
                             style={{ background: '#991b1b', color: '#fff' }}
                             onClick={() => handleToggleVotingStatus('CLOSED')}
                           >
-                            ⏸️ Stop Voting
+                            ⏸️ Close Ratings
                           </button>
                         )}
+
+                        <button
+                          className="btn-action"
+                          style={{ background: '#0284c7', color: '#fff' }}
+                          onClick={handleEnableAllCompletedRatings}
+                          title="Enable ratings for all performers whose stage status is Completed"
+                        >
+                          ⚡ Enable Ratings for All Completed
+                        </button>
+
+                        <button
+                          className="btn-action"
+                          style={{ background: '#b45309', color: '#fff' }}
+                          onClick={handleCalculateWinners}
+                          title="Calculate raw averages and determine Top 3"
+                        >
+                          🏆 Calculate Winners
+                        </button>
 
                         <button
                           className="btn-secondary"
                           onClick={handleToggleRevealWinner}
                         >
-                          {event.resultsRevealed ? '👁️ Hide Winner from Public' : '🏆 Reveal Winner on Stage'}
+                          {event.resultsRevealed ? '👁️ Hide Results from Public' : '🏆 Reveal Winners to Audience'}
                         </button>
 
                         <button
                           className="btn-secondary"
                           onClick={() => setStageFullscreenModal(true)}
                         >
-                          📺 Stage Projector Mode
+                          📺 Projector: Rating QR
+                        </button>
+
+                        <button
+                          className="btn-secondary"
+                          style={{ borderColor: 'var(--muted-gold)', color: 'var(--maroon-900)' }}
+                          onClick={() => setCeremonyFullscreenModal(true)}
+                        >
+                          👑 Projector: Winner Ceremony
                         </button>
 
                         <button
                           className="btn-secondary"
                           onClick={downloadStageQrPng}
                         >
-                          📥 Download Stage QR
+                          📥 Download QR
                         </button>
 
                         <button
                           className="btn-secondary"
                           onClick={copyVotingLink}
                         >
-                          🔗 Copy Vote Link
+                          🔗 Copy Rating Link
+                        </button>
+
+                        <button
+                          className="btn-secondary"
+                          onClick={copyResultsLink}
+                        >
+                          🔗 Copy Results Link
                         </button>
                       </div>
+                    </div>
+
+                    {/* Edit Award Titles Inline Card */}
+                    <div className="admin-award-titles-card">
+                      <div className="award-titles-header">
+                        <strong style={{ color: 'var(--maroon-900)', fontSize: '14px' }}>🏆 Official Award Titles Configuration</strong>
+                        <span style={{ fontSize: '12px', color: 'var(--charcoal-600)' }}>Displayed on the winner podium and announcement screens</span>
+                      </div>
+                      <form onSubmit={handleSaveAwardTitles} className="award-titles-form">
+                        <div className="award-input-col">
+                          <label>1st Place Award Title</label>
+                          <input
+                            type="text"
+                            className="form-input"
+                            value={awardTitles.first}
+                            onChange={e => setAwardTitles({ ...awardTitles, first: e.target.value })}
+                          />
+                        </div>
+                        <div className="award-input-col">
+                          <label>2nd Place Award Title</label>
+                          <input
+                            type="text"
+                            className="form-input"
+                            value={awardTitles.second}
+                            onChange={e => setAwardTitles({ ...awardTitles, second: e.target.value })}
+                          />
+                        </div>
+                        <div className="award-input-col">
+                          <label>3rd Place Award Title</label>
+                          <input
+                            type="text"
+                            className="form-input"
+                            value={awardTitles.third}
+                            onChange={e => setAwardTitles({ ...awardTitles, third: e.target.value })}
+                          />
+                        </div>
+                        <button type="submit" className="btn-secondary" style={{ alignSelf: 'flex-end', height: '42px' }}>
+                          Save Titles
+                        </button>
+                      </form>
                     </div>
 
                     {/* Voting Metrics Overview */}
                     <div className="admin-stats-grid" style={{ marginTop: '20px' }}>
                       <div className="admin-stat-card">
-                        <div className="stat-label">Total Votes Cast</div>
-                        <div className="stat-val">{adminVotingResults?.totalVotes || 0}</div>
+                        <div className="stat-label">Total Valid Ratings</div>
+                        <div className="stat-val">{adminVotingResults?.totalRatings || 0}</div>
                       </div>
                       <div className="admin-stat-card">
                         <div className="stat-label">Active Performers</div>
                         <div className="stat-val">{adminPerformers.filter(p => p.isActive).length}</div>
                       </div>
                       <div className="admin-stat-card">
-                        <div className="stat-label">Leader / Top Performer</div>
-                        <div className="stat-val" style={{ fontSize: '20px' }}>
-                          {adminVotingResults?.performers?.[0]?.name ? (
-                            adminVotingResults.isTie ? (
-                              <span style={{ color: '#d97706' }}>Tie ({adminVotingResults.winnerCount} Artists)</span>
-                            ) : (
-                              adminVotingResults.performers[0].name
-                            )
+                        <div className="stat-label">1st Place Leader</div>
+                        <div className="stat-val" style={{ fontSize: '18px' }}>
+                          {adminVotingResults?.top3Winners?.[0]?.name ? (
+                            <span>
+                              {adminVotingResults.top3Winners[0].name}{' '}
+                              <strong style={{ color: 'var(--green-emerald)', fontSize: '14px' }}>
+                                ({Number(adminVotingResults.top3Winners[0].averageRating).toFixed(2)}★)
+                              </strong>
+                            </span>
                           ) : (
-                            'No Votes Yet'
+                            'No Ratings Yet'
                           )}
                         </div>
                       </div>
                       <div className="admin-stat-card">
-                        <div className="stat-label">Audience Link</div>
-                        <div className="stat-val" style={{ fontSize: '14px', wordBreak: 'break-all' }}>
-                          /?page=vote
+                        <div className="stat-label">Public URLs</div>
+                        <div className="stat-val" style={{ fontSize: '12px', wordBreak: 'break-all' }}>
+                          /vote &amp; /results
                         </div>
                       </div>
                     </div>
 
-                    {/* Results Tally & Live Bar Chart */}
+                    {/* Real-time Private Admin Results Table with Distribution Bars */}
                     <div className="admin-results-section">
                       <div className="section-header-inline">
                         <div>
                           <h3 style={{ fontFamily: 'var(--font-serif)', fontSize: '22px', color: 'var(--maroon-900)' }}>
-                            Live Performer Vote Tally
+                            Live Performance Ratings &amp; Average Tally
                           </h3>
                           <p style={{ fontSize: '13px', color: 'var(--charcoal-600)' }}>
-                            Real-time private audience polling results with automated tie detection.
+                            Formula: Average Rating = Total Rating Points / Total Number of Valid Ratings (Ranked by raw average float &amp; rating count).
                           </p>
                         </div>
                         <button
@@ -2332,43 +2672,94 @@ export default function App() {
                           onClick={() => loadAdminVotingData()}
                           style={{ padding: '6px 14px', fontSize: '12.5px' }}
                         >
-                          🔄 Refresh Tally
+                          🔄 Refresh Ratings
                         </button>
                       </div>
 
                       {adminVotingResults?.performers && adminVotingResults.performers.length > 0 ? (
-                        <div className="results-chart-container">
-                          {adminVotingResults.performers.map((p, idx) => {
-                            const total = adminVotingResults.totalVotes || 1;
-                            const pct = Math.round((p.voteCount / total) * 100);
-                            const isLeader = idx === 0 && p.voteCount > 0;
-                            return (
-                              <div key={p.id} className={`result-bar-card ${isLeader ? 'leader' : ''}`}>
-                                <div className="result-bar-header">
-                                  <div className="result-performer-meta">
-                                    <span className="result-rank">#{idx + 1}</span>
-                                    <strong className="result-name">{p.name}</strong>
-                                    <span className="result-cat">({p.category})</span>
-                                    {isLeader && <span className="leader-crown">🏆 Current Leader</span>}
-                                  </div>
-                                  <div className="result-vote-count">
-                                    <span className="vote-num">{p.voteCount}</span> votes
-                                    <span className="vote-pct">({pct}%)</span>
-                                  </div>
-                                </div>
-                                <div className="bar-track">
-                                  <div
-                                    className={`bar-fill ${isLeader ? 'leader-fill' : ''}`}
-                                    style={{ width: `${pct}%` }}
-                                  ></div>
-                                </div>
-                              </div>
-                            );
-                          })}
+                        <div className="table-responsive">
+                          <table className="admin-table">
+                            <thead>
+                              <tr>
+                                <th>Rank</th>
+                                <th>Performer</th>
+                                <th>Category</th>
+                                <th>Stage Status</th>
+                                <th>Audience Ratings</th>
+                                <th>Average Score</th>
+                                <th>Rating Breakdown (1★ to 5★)</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {adminVotingResults.performers.map((p, idx) => {
+                                const isTop3 = idx < 3 && p.totalRatings > 0;
+                                const isTie = idx > 0 && adminVotingResults.performers[idx - 1].rawAverage === p.rawAverage && adminVotingResults.performers[idx - 1].totalRatings === p.totalRatings && p.totalRatings > 0;
+                                return (
+                                  <tr key={p.id} style={{ background: isTop3 ? 'rgba(254, 243, 199, 0.25)' : 'transparent' }}>
+                                    <td>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                        <strong>#{idx + 1}</strong>
+                                        {idx === 0 && p.totalRatings > 0 && <span>👑</span>}
+                                        {isTie && <span className="status-pill pending" style={{ fontSize: '10px' }}>TIE</span>}
+                                      </div>
+                                    </td>
+                                    <td>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                        {p.photoUrl ? (
+                                          <img src={p.photoUrl} alt={p.name} style={{ width: '34px', height: '34px', borderRadius: '50%', objectFit: 'cover' }} />
+                                        ) : (
+                                          <div style={{ width: '34px', height: '34px', borderRadius: '50%', background: 'var(--maroon-900)', color: 'var(--gold-300)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 700 }}>
+                                            {p.name.slice(0, 2).toUpperCase()}
+                                          </div>
+                                        )}
+                                        <div>
+                                          <strong>{p.name}</strong>
+                                          {isTop3 && (
+                                            <div style={{ fontSize: '11px', color: 'var(--burgundy-light)', fontWeight: 700 }}>
+                                              {idx === 0 ? awardTitles.first : idx === 1 ? awardTitles.second : awardTitles.third}
+                                            </div>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </td>
+                                    <td>
+                                      <span className="performer-category-pill">{p.category}</span>
+                                    </td>
+                                    <td>
+                                      <span className={`status-pill ${p.performanceStatus === 'PERFORMING' ? 'live' : p.performanceStatus === 'COMPLETED' ? 'verified' : 'pending'}`}>
+                                        {p.performanceStatus} {p.ratingsEnabled ? '(RATED)' : '(LOCKED)'}
+                                      </span>
+                                    </td>
+                                    <td>
+                                      <strong>{p.totalRatings}</strong> valid ratings
+                                    </td>
+                                    <td>
+                                      <div style={{ display: 'flex', alignItems: 'baseline', gap: '4px' }}>
+                                        <span style={{ fontSize: '18px', fontWeight: 800, color: 'var(--maroon-900)' }}>
+                                          {Number(p.averageRating).toFixed(2)}
+                                        </span>
+                                        <span style={{ fontSize: '12px', color: 'var(--charcoal-600)' }}>/ 5.00</span>
+                                      </div>
+                                    </td>
+                                    <td style={{ minWidth: '180px' }}>
+                                      {/* 1 to 5 star distribution pills */}
+                                      <div className="star-dist-mini">
+                                        <span title="5 Stars" className="dist-item">5★: {p.star5}</span>
+                                        <span title="4 Stars" className="dist-item">4★: {p.star4}</span>
+                                        <span title="3 Stars" className="dist-item">3★: {p.star3}</span>
+                                        <span title="2 Stars" className="dist-item">2★: {p.star2}</span>
+                                        <span title="1 Star" className="dist-item">1★: {p.star1}</span>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
                         </div>
                       ) : (
                         <div style={{ textAlign: 'center', padding: '36px', background: '#fff', borderRadius: 'var(--radius-md)', border: '1px solid var(--cream-300)' }}>
-                          <p style={{ color: 'var(--charcoal-600)' }}>No audience votes recorded yet. Start voting and project the Stage QR code.</p>
+                          <p style={{ color: 'var(--charcoal-600)' }}>No audience ratings recorded yet. Open ratings and project the Stage QR code.</p>
                         </div>
                       )}
                     </div>
@@ -2377,28 +2768,31 @@ export default function App() {
                     <div className="stage-qr-preview-box">
                       <div className="stage-qr-content">
                         <div>
-                          <div className="section-eyebrow">STAGE AUDIENCE VOTING QR</div>
+                          <div className="section-eyebrow">STAGE AUDIENCE RATING QR</div>
                           <h4 style={{ fontFamily: 'var(--font-serif)', fontSize: '20px', color: 'var(--maroon-900)' }}>
-                            Permanent Voting QR Code
+                            Permanent Performance Rating QR Code
                           </h4>
                           <p style={{ fontSize: '13px', color: 'var(--charcoal-600)', marginBottom: '16px' }}>
-                            Show this on the venue screen or projector. Audience scans once to vote. Permanent URL remains unchanged.
+                            Show this on the venue screen or projector. Audience scans with their phone camera to rate each performer out of 5 stars.
                           </p>
                           <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                             <button className="btn-primary" onClick={() => setStageFullscreenModal(true)}>
-                              📺 Launch Fullscreen Projector Mode
+                              📺 Launch Rating QR Projector Mode
+                            </button>
+                            <button className="btn-secondary" onClick={() => setCeremonyFullscreenModal(true)}>
+                              👑 Launch Winner Ceremony Projector Mode
                             </button>
                             <button className="btn-secondary" onClick={downloadStageQrPng}>
                               📥 Download High-Res PNG
                             </button>
                             <button className="btn-secondary" onClick={copyVotingLink}>
-                              🔗 Copy Direct Link
+                              🔗 Copy Rating Link
                             </button>
                           </div>
                         </div>
                         <div className="stage-qr-thumb">
                           {stageQrDataUrl && (
-                            <img src={stageQrDataUrl} alt="Alfaaz Voting Stage QR" />
+                            <img src={stageQrDataUrl} alt="Alfaaz Performance Rating Stage QR" />
                           )}
                         </div>
                       </div>
@@ -2406,7 +2800,7 @@ export default function App() {
                   </div>
                 )}
 
-                {/* TAB 6: PERFORMER MANAGEMENT */}
+                {/* TAB 6: PERFORMER MANAGEMENT & STAGE STATUS */}
                 {adminTab === 'performers' && (
                   <div className="admin-performers-tab">
                     <div className="admin-table-toolbar">
@@ -2415,7 +2809,7 @@ export default function App() {
                           Stage Performers Roster ({adminPerformers.length})
                         </h3>
                         <p style={{ fontSize: '13px', color: 'var(--charcoal-600)' }}>
-                          Add, edit, or deactivate performers. Active performers automatically appear on the voting page.
+                          Control live performance status (`Upcoming`, `Performing Now`, `Completed`) and toggle audience rating eligibility.
                         </p>
                       </div>
                       <button className="btn-primary" onClick={openAddPerformerModal}>
@@ -2430,8 +2824,8 @@ export default function App() {
                             <th>Order</th>
                             <th>Artist / Performer</th>
                             <th>Category</th>
-                            <th>Description</th>
-                            <th>Voting Eligibility</th>
+                            <th>Stage Status</th>
+                            <th>Rating Eligibility</th>
                             <th>Actions</th>
                           </tr>
                         </thead>
@@ -2459,21 +2853,40 @@ export default function App() {
                                         {p.name.slice(0, 2).toUpperCase()}
                                       </div>
                                     )}
-                                    <strong>{p.name}</strong>
+                                    <div>
+                                      <strong>{p.name}</strong>
+                                      {p.description && (
+                                        <div style={{ fontSize: '11.5px', color: 'var(--charcoal-600)' }}>{p.description}</div>
+                                      )}
+                                    </div>
                                   </div>
                                 </td>
                                 <td>
                                   <span className="performer-category-pill">{p.category}</span>
                                 </td>
-                                <td style={{ maxWidth: '240px', fontSize: '12.5px', color: 'var(--charcoal-600)' }}>
-                                  {p.description || '—'}
+                                <td>
+                                  {/* Quick Stage Status Switcher */}
+                                  <select
+                                    className="form-input"
+                                    style={{ padding: '4px 8px', fontSize: '12px', minWidth: '130px' }}
+                                    value={p.performanceStatus || 'UPCOMING'}
+                                    onChange={(e) => handleTogglePerformerStageStatus(p.id, e.target.value, p.ratingsEnabled)}
+                                  >
+                                    <option value="UPCOMING">⏳ Upcoming</option>
+                                    <option value="PERFORMING">🔴 Performing Now</option>
+                                    <option value="COMPLETED">🟢 Completed</option>
+                                  </select>
                                 </td>
                                 <td>
-                                  {p.isActive ? (
-                                    <span className="status-pill verified">ACTIVE FOR VOTING</span>
-                                  ) : (
-                                    <span className="status-pill pending">DEACTIVATED</span>
-                                  )}
+                                  {/* Quick Ratings Toggle */}
+                                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: 600 }}>
+                                    <input
+                                      type="checkbox"
+                                      checked={Boolean(p.ratingsEnabled)}
+                                      onChange={(e) => handleTogglePerformerRatingsEnabled(p.id, p.performanceStatus, e.target.checked)}
+                                    />
+                                    <span>{p.ratingsEnabled ? 'Ratings Open' : 'Locked'}</span>
+                                  </label>
                                 </td>
                                 <td>
                                   <div style={{ display: 'flex', gap: '6px' }}>
@@ -2513,7 +2926,7 @@ export default function App() {
                     {editingPerformerId ? 'Edit Performer' : 'Register New Performer'}
                   </h3>
                   <p className="modal-subtitle">
-                    Performer will automatically be listed on the public audience voting page.
+                    Manage performer details, stage status, and rating eligibility.
                   </p>
 
                   <form onSubmit={handleSavePerformer}>
@@ -2547,6 +2960,19 @@ export default function App() {
                     </div>
 
                     <div className="form-group">
+                      <label>Stage Status</label>
+                      <select
+                        className="form-input"
+                        value={performerForm.performanceStatus}
+                        onChange={e => setPerformerForm({ ...performerForm, performanceStatus: e.target.value })}
+                      >
+                        <option value="UPCOMING">⏳ Upcoming (Not yet on stage)</option>
+                        <option value="PERFORMING">🔴 Performing Now (On stage)</option>
+                        <option value="COMPLETED">🟢 Completed (Finished performance)</option>
+                      </select>
+                    </div>
+
+                    <div className="form-group">
                       <label>Description (Optional piece title or intro)</label>
                       <textarea
                         rows={2}
@@ -2570,7 +2996,7 @@ export default function App() {
 
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', marginBottom: '18px' }}>
                       <div className="form-group" style={{ marginBottom: 0 }}>
-                        <label>Display Order</label>
+                        <label>Performance Order</label>
                         <input
                           type="number"
                           min="1"
@@ -2583,10 +3009,10 @@ export default function App() {
                         <label style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', marginTop: '16px' }}>
                           <input
                             type="checkbox"
-                            checked={performerForm.isActive}
-                            onChange={e => setPerformerForm({ ...performerForm, isActive: e.target.checked })}
+                            checked={performerForm.ratingsEnabled}
+                            onChange={e => setPerformerForm({ ...performerForm, ratingsEnabled: e.target.checked })}
                           />
-                          <span>Eligible for Voting</span>
+                          <span>Enable Audience Ratings</span>
                         </label>
                       </div>
                     </div>
@@ -2604,7 +3030,7 @@ export default function App() {
                         className="btn-primary"
                         disabled={isSavingPerformer}
                       >
-                        {isSavingPerformer ? 'Saving...' : (editingPerformerId ? 'Update Performer' : 'Add to Voting List')}
+                        {isSavingPerformer ? 'Saving...' : (editingPerformerId ? 'Update Performer' : 'Register Performer')}
                       </button>
                     </div>
                   </form>
@@ -2612,7 +3038,7 @@ export default function App() {
               </div>
             )}
 
-            {/* FULLSCREEN STAGE PRESENTATION PROJECTOR MODAL */}
+            {/* FULLSCREEN STAGE QR PROJECTOR MODAL */}
             {stageFullscreenModal && (
               <div className="stage-fullscreen-overlay">
                 <button
@@ -2622,15 +3048,15 @@ export default function App() {
                   ✕ Exit Fullscreen
                 </button>
                 <div className="stage-presentation-container">
-                  <div className="stage-presentation-badge">✦ LIVE ON STAGE ✦</div>
-                  <h1 className="stage-presentation-title">ALFAAZ AUDIENCE CHOICE AWARD</h1>
+                  <div className="stage-presentation-badge">✦ LIVE AUDIENCE RATING ✦</div>
+                  <h1 className="stage-presentation-title">ALFAAZ AUDIENCE PERFORMANCE RATING</h1>
                   <p className="stage-presentation-subtitle">
-                    Scan with your phone camera to cast your vote for your favourite performer
+                    Scan with your phone camera to rate each performer out of 5 stars
                   </p>
 
                   <div className="stage-qr-frame">
                     {stageQrDataUrl && (
-                      <img src={stageQrDataUrl} alt="Scan to Vote QR" className="stage-qr-large" />
+                      <img src={stageQrDataUrl} alt="Scan to Rate QR" className="stage-qr-large" />
                     )}
                   </div>
 
@@ -2640,7 +3066,110 @@ export default function App() {
                   </div>
 
                   <div className="stage-presentation-footer">
-                    <span>100% Anonymous</span> · <span>Single Vote Per Device</span> · <span>Beyond Temptation, Basmat</span>
+                    <span>100% Anonymous</span> · <span>Rate Each Artist Individually</span> · <span>Beyond Temptation, Basmat</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* FULLSCREEN CEREMONY WINNERS PROJECTOR MODAL */}
+            {ceremonyFullscreenModal && (
+              <div className="stage-fullscreen-overlay ceremony-overlay">
+                <button
+                  className="stage-exit-btn"
+                  onClick={() => setCeremonyFullscreenModal(false)}
+                >
+                  ✕ Exit Ceremony Mode
+                </button>
+                <div className="stage-presentation-container" style={{ maxWidth: '980px' }}>
+                  <div className="stage-presentation-badge">✦ ALFAAZ OPEN MIC AWARDS CEREMONY ✦</div>
+                  <h1 className="stage-presentation-title" style={{ fontSize: 'clamp(32px, 6vw, 52px)' }}>
+                    TOP 3 AUDIENCE PERFORMANCE WINNERS
+                  </h1>
+                  <p className="stage-presentation-subtitle">
+                    Determined by Audience Ratings at Beyond Temptation, Basmat
+                  </p>
+
+                  {adminVotingResults?.top3Winners && adminVotingResults.top3Winners.length > 0 ? (
+                    <div className="ceremony-podium-grid">
+                      {/* Rank 2 */}
+                      {adminVotingResults.top3Winners.length >= 2 && (
+                        <div className="ceremony-card silver">
+                          <div className="ceremony-rank-badge">🥈 2ND PLACE</div>
+                          <div className="ceremony-award-name">{awardTitles.second}</div>
+                          <div className="ceremony-avatar-wrap">
+                            {adminVotingResults.top3Winners[1].photoUrl ? (
+                              <img src={adminVotingResults.top3Winners[1].photoUrl} alt={adminVotingResults.top3Winners[1].name} />
+                            ) : (
+                              <div className="ceremony-initials">{adminVotingResults.top3Winners[1].name.slice(0, 2).toUpperCase()}</div>
+                            )}
+                          </div>
+                          <h3 className="ceremony-artist-name">{adminVotingResults.top3Winners[1].name}</h3>
+                          <div className="ceremony-artist-cat">{adminVotingResults.top3Winners[1].category}</div>
+                          <div className="ceremony-score">
+                            {Number(adminVotingResults.top3Winners[1].averageRating).toFixed(2)}★ / 5.00
+                          </div>
+                          <div className="ceremony-votes-count">
+                            {adminVotingResults.top3Winners[1].totalRatings} audience ratings
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Rank 1 */}
+                      {adminVotingResults.top3Winners.length >= 1 && (
+                        <div className="ceremony-card gold elevated">
+                          <div className="ceremony-crown">👑</div>
+                          <div className="ceremony-rank-badge gold-badge">🥇 1ST PLACE · STAR PERFORMER</div>
+                          <div className="ceremony-award-name gold-text">{awardTitles.first}</div>
+                          <div className="ceremony-avatar-wrap gold-border">
+                            {adminVotingResults.top3Winners[0].photoUrl ? (
+                              <img src={adminVotingResults.top3Winners[0].photoUrl} alt={adminVotingResults.top3Winners[0].name} />
+                            ) : (
+                              <div className="ceremony-initials gold-bg">{adminVotingResults.top3Winners[0].name.slice(0, 2).toUpperCase()}</div>
+                            )}
+                          </div>
+                          <h2 className="ceremony-artist-name gold-artist">{adminVotingResults.top3Winners[0].name}</h2>
+                          <div className="ceremony-artist-cat">{adminVotingResults.top3Winners[0].category}</div>
+                          <div className="ceremony-score gold-score">
+                            {Number(adminVotingResults.top3Winners[0].averageRating).toFixed(2)}★ / 5.00
+                          </div>
+                          <div className="ceremony-votes-count">
+                            {adminVotingResults.top3Winners[0].totalRatings} audience ratings
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Rank 3 */}
+                      {adminVotingResults.top3Winners.length >= 3 && (
+                        <div className="ceremony-card bronze">
+                          <div className="ceremony-rank-badge">🥉 3RD PLACE</div>
+                          <div className="ceremony-award-name">{awardTitles.third}</div>
+                          <div className="ceremony-avatar-wrap">
+                            {adminVotingResults.top3Winners[2].photoUrl ? (
+                              <img src={adminVotingResults.top3Winners[2].photoUrl} alt={adminVotingResults.top3Winners[2].name} />
+                            ) : (
+                              <div className="ceremony-initials">{adminVotingResults.top3Winners[2].name.slice(0, 2).toUpperCase()}</div>
+                            )}
+                          </div>
+                          <h3 className="ceremony-artist-name">{adminVotingResults.top3Winners[2].name}</h3>
+                          <div className="ceremony-artist-cat">{adminVotingResults.top3Winners[2].category}</div>
+                          <div className="ceremony-score">
+                            {Number(adminVotingResults.top3Winners[2].averageRating).toFixed(2)}★ / 5.00
+                          </div>
+                          <div className="ceremony-votes-count">
+                            {adminVotingResults.top3Winners[2].totalRatings} audience ratings
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <p style={{ color: 'var(--muted-gold-light)', margin: '40px 0' }}>
+                      Please click <strong>Calculate Winners</strong> in the admin dashboard after closing ratings.
+                    </p>
+                  )}
+
+                  <div className="stage-presentation-footer" style={{ marginTop: '30px' }}>
+                    <span>Live Public Results URL: </span> <strong>{window.location.host}/results</strong>
                   </div>
                 </div>
               </div>
