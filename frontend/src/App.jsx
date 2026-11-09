@@ -14,6 +14,76 @@ function loadRazorpayScript() {
   });
 }
 
+export function normalizePhotoUrl(url) {
+  if (!url || typeof url !== 'string') return '';
+  const trimmed = url.trim();
+  // Automatically convert Google Drive share links into direct thumbnail links
+  const gdriveMatch = trimmed.match(/drive\.google\.com\/(?:file\/d\/|open\?id=)([a-zA-Z0-9_-]+)/);
+  if (gdriveMatch && gdriveMatch[1]) {
+    return `https://drive.google.com/thumbnail?id=${gdriveMatch[1]}&sz=w800`;
+  }
+  return trimmed;
+}
+
+export function PerformerAvatar({ src, name = '', size, className = '', style = {}, imgStyle = {} }) {
+  const [hasError, setHasError] = useState(false);
+  const initials = (name || '').split(' ').filter(Boolean).map(n => n[0]).join('').slice(0, 2).toUpperCase() || 'P';
+  const resolvedSrc = normalizePhotoUrl(src);
+
+  useEffect(() => {
+    setHasError(false);
+  }, [src]);
+
+  const dimensionStyle = size ? {
+    width: typeof size === 'number' ? `${size}px` : size,
+    height: typeof size === 'number' ? `${size}px` : size,
+    minWidth: typeof size === 'number' ? `${size}px` : size,
+    minHeight: typeof size === 'number' ? `${size}px` : size,
+  } : {};
+
+  if (resolvedSrc && !hasError) {
+    return (
+      <img
+        src={resolvedSrc}
+        alt={name}
+        className={className}
+        style={{
+          borderRadius: '50%',
+          objectFit: 'cover',
+          display: 'block',
+          ...dimensionStyle,
+          ...style,
+          ...imgStyle,
+        }}
+        onError={() => setHasError(true)}
+      />
+    );
+  }
+
+  return (
+    <div
+      className={className || 'performer-initials-avatar'}
+      style={{
+        borderRadius: '50%',
+        background: 'linear-gradient(135deg, var(--burgundy-deep, #4a0e17) 0%, var(--rose-red, #8b1d2c) 100%)',
+        color: 'var(--gold-300, #f6d285)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontWeight: 700,
+        fontSize: size && typeof size === 'number' ? `${Math.max(10, Math.round(size * 0.38))}px` : '14px',
+        userSelect: 'none',
+        flexShrink: 0,
+        border: '2px solid var(--muted-gold, #c5a059)',
+        ...dimensionStyle,
+        ...style,
+      }}
+    >
+      {initials}
+    </div>
+  );
+}
+
 export default function App() {
   const [page, setPage] = useState('home'); // home, book, payment, confirmation, myticket, admin
   const [event, setEvent] = useState({
@@ -831,6 +901,60 @@ export default function App() {
     setPerformerModalOpen(true);
   }
 
+  const handlePhotoUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      showNotice('Please select an image file (PNG, JPG, WebP)', 'error');
+      return;
+    }
+
+    if (file.size > 10 * 1024 * 1024) {
+      showNotice('Please select an image smaller than 10MB', 'error');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        // Compress and resize to max 400x400 for super-fast loading and reliable storage
+        const canvas = document.createElement('canvas');
+        const maxDim = 400;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > maxDim) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          }
+        } else {
+          if (height > maxDim) {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+
+        const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.82);
+        setPerformerForm(prev => ({ ...prev, photoUrl: compressedDataUrl }));
+        showNotice('Photo loaded and compressed successfully!', 'success');
+      };
+      img.onerror = () => {
+        showNotice('Failed to read image file', 'error');
+      };
+      img.src = event.target.result;
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
   async function handleSavePerformer(e) {
     e.preventDefault();
     if (!performerForm.name.trim()) {
@@ -845,7 +969,7 @@ export default function App() {
         name: performerForm.name.trim(),
         category: performerForm.category.trim(),
         description: performerForm.description?.trim() || '',
-        photoUrl: performerForm.photoUrl?.trim() || '',
+        photoUrl: normalizePhotoUrl(performerForm.photoUrl),
         isActive: performerForm.isActive,
         displayOrder: Number(performerForm.displayOrder) || 1,
         performanceStatus: performerForm.performanceStatus || 'UPCOMING',
@@ -1834,13 +1958,7 @@ export default function App() {
                     >
                       <div className="card-top-row">
                         <div className="performer-avatar-wrap">
-                          {p.photoUrl ? (
-                            <img src={p.photoUrl} alt={p.name} className="performer-photo" />
-                          ) : (
-                            <div className="performer-initials-avatar">
-                              {p.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
-                            </div>
-                          )}
+                          <PerformerAvatar src={p.photoUrl} name={p.name} size={64} className="performer-photo" />
                         </div>
 
                         <div className="performer-main-info">
@@ -1998,13 +2116,11 @@ export default function App() {
                             {awardTitles.second || 'Alfaaz Outstanding Performer'}
                           </div>
                           <div className="winner-avatar-frame silver-frame">
-                            {publicWinnersData.winners[1].photoUrl ? (
-                              <img src={publicWinnersData.winners[1].photoUrl} alt={publicWinnersData.winners[1].name} />
-                            ) : (
-                              <div className="winner-placeholder-avatar">
-                                {publicWinnersData.winners[1].name.slice(0, 2).toUpperCase()}
-                              </div>
-                            )}
+                            <PerformerAvatar
+                              src={publicWinnersData.winners[1].photoUrl}
+                              name={publicWinnersData.winners[1].name}
+                              style={{ width: '100%', height: '100%', borderRadius: 0, border: 'none' }}
+                            />
                           </div>
                           <h3 className="winner-artist-name">{publicWinnersData.winners[1].name}</h3>
                           <span className="winner-artist-cat">{publicWinnersData.winners[1].category}</span>
@@ -2029,13 +2145,11 @@ export default function App() {
                             {awardTitles.first || 'Alfaaz Star Performer'}
                           </div>
                           <div className="winner-avatar-frame gold-frame">
-                            {publicWinnersData.winners[0].photoUrl ? (
-                              <img src={publicWinnersData.winners[0].photoUrl} alt={publicWinnersData.winners[0].name} />
-                            ) : (
-                              <div className="winner-placeholder-avatar gold-bg">
-                                {publicWinnersData.winners[0].name.slice(0, 2).toUpperCase()}
-                              </div>
-                            )}
+                            <PerformerAvatar
+                              src={publicWinnersData.winners[0].photoUrl}
+                              name={publicWinnersData.winners[0].name}
+                              style={{ width: '100%', height: '100%', borderRadius: 0, border: 'none' }}
+                            />
                           </div>
                           <h2 className="winner-artist-name gold-name">{publicWinnersData.winners[0].name}</h2>
                           <span className="winner-artist-cat">{publicWinnersData.winners[0].category}</span>
@@ -2059,13 +2173,11 @@ export default function App() {
                             {awardTitles.third || 'Alfaaz Rising Performer'}
                           </div>
                           <div className="winner-avatar-frame bronze-frame">
-                            {publicWinnersData.winners[2].photoUrl ? (
-                              <img src={publicWinnersData.winners[2].photoUrl} alt={publicWinnersData.winners[2].name} />
-                            ) : (
-                              <div className="winner-placeholder-avatar">
-                                {publicWinnersData.winners[2].name.slice(0, 2).toUpperCase()}
-                              </div>
-                            )}
+                            <PerformerAvatar
+                              src={publicWinnersData.winners[2].photoUrl}
+                              name={publicWinnersData.winners[2].name}
+                              style={{ width: '100%', height: '100%', borderRadius: 0, border: 'none' }}
+                            />
                           </div>
                           <h3 className="winner-artist-name">{publicWinnersData.winners[2].name}</h3>
                           <span className="winner-artist-cat">{publicWinnersData.winners[2].category}</span>
@@ -2749,13 +2861,7 @@ export default function App() {
                                     </td>
                                     <td>
                                       <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                        {p.photoUrl ? (
-                                          <img src={p.photoUrl} alt={p.name} style={{ width: '34px', height: '34px', borderRadius: '50%', objectFit: 'cover' }} />
-                                        ) : (
-                                          <div style={{ width: '34px', height: '34px', borderRadius: '50%', background: 'var(--maroon-900)', color: 'var(--gold-300)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 700 }}>
-                                            {p.name.slice(0, 2).toUpperCase()}
-                                          </div>
-                                        )}
+                                        <PerformerAvatar src={p.photoUrl} name={p.name} size={34} />
                                         <div>
                                           <strong>{p.name}</strong>
                                           {isTop3 && (
@@ -2886,17 +2992,7 @@ export default function App() {
                                 <td><strong>#{p.displayOrder}</strong></td>
                                 <td>
                                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                    {p.photoUrl ? (
-                                      <img
-                                        src={p.photoUrl}
-                                        alt={p.name}
-                                        style={{ width: '38px', height: '38px', borderRadius: '50%', objectFit: 'cover' }}
-                                      />
-                                    ) : (
-                                      <div style={{ width: '38px', height: '38px', borderRadius: '50%', background: 'var(--maroon-900)', color: 'var(--gold-300)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '13px' }}>
-                                        {p.name.slice(0, 2).toUpperCase()}
-                                      </div>
-                                    )}
+                                    <PerformerAvatar src={p.photoUrl} name={p.name} size={38} />
                                     <div>
                                       <strong>{p.name}</strong>
                                       {p.description && (
@@ -3028,14 +3124,63 @@ export default function App() {
                     </div>
 
                     <div className="form-group">
-                      <label>Photo URL (Optional)</label>
-                      <input
-                        type="url"
-                        placeholder="https://..."
-                        className="form-input"
-                        value={performerForm.photoUrl}
-                        onChange={e => setPerformerForm({ ...performerForm, photoUrl: e.target.value })}
-                      />
+                      <label>Performer Photo (Optional)</label>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        {performerForm.photoUrl ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px', background: 'var(--cream-50, #fdfbf7)', borderRadius: '8px', border: '1px solid var(--ivory-border, #e5d8c5)' }}>
+                            <PerformerAvatar src={performerForm.photoUrl} name={performerForm.name} size={48} />
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--burgundy-deep, #4a0e17)' }}>✓ Photo Attached</div>
+                              <div style={{ fontSize: '11px', color: '#666', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {performerForm.photoUrl.startsWith('data:') ? 'Uploaded directly from device' : performerForm.photoUrl}
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setPerformerForm({ ...performerForm, photoUrl: '' })}
+                              style={{ background: 'none', border: 'none', color: '#dc2626', cursor: 'pointer', fontSize: '12px', fontWeight: 600, textDecoration: 'underline' }}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        ) : null}
+
+                        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+                          <label
+                            className="btn-secondary"
+                            style={{
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                              padding: '8px 14px',
+                              fontSize: '13px',
+                              fontWeight: 600,
+                              margin: 0,
+                              borderRadius: '6px',
+                              background: '#f3ece1',
+                              border: '1px solid #d8c8b5'
+                            }}
+                          >
+                            📷 Choose Photo from Device
+                            <input
+                              type="file"
+                              accept="image/*"
+                              style={{ display: 'none' }}
+                              onChange={handlePhotoUpload}
+                            />
+                          </label>
+                          <span style={{ fontSize: '12px', color: '#777' }}>or paste an image link below:</span>
+                        </div>
+
+                        <input
+                          type="text"
+                          placeholder="Paste direct image URL or Google Drive link"
+                          className="form-input"
+                          value={performerForm.photoUrl}
+                          onChange={e => setPerformerForm({ ...performerForm, photoUrl: e.target.value })}
+                        />
+                      </div>
                     </div>
 
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', marginBottom: '18px' }}>
@@ -3142,11 +3287,11 @@ export default function App() {
                           <div className="ceremony-rank-badge">🥈 2ND PLACE</div>
                           <div className="ceremony-award-name">{awardTitles.second}</div>
                           <div className="ceremony-avatar-wrap">
-                            {adminVotingResults.top3Winners[1].photoUrl ? (
-                              <img src={adminVotingResults.top3Winners[1].photoUrl} alt={adminVotingResults.top3Winners[1].name} />
-                            ) : (
-                              <div className="ceremony-initials">{adminVotingResults.top3Winners[1].name.slice(0, 2).toUpperCase()}</div>
-                            )}
+                            <PerformerAvatar
+                              src={adminVotingResults.top3Winners[1].photoUrl}
+                              name={adminVotingResults.top3Winners[1].name}
+                              style={{ width: '100%', height: '100%', borderRadius: 0, border: 'none' }}
+                            />
                           </div>
                           <h3 className="ceremony-artist-name">{adminVotingResults.top3Winners[1].name}</h3>
                           <div className="ceremony-artist-cat">{adminVotingResults.top3Winners[1].category}</div>
@@ -3166,11 +3311,11 @@ export default function App() {
                           <div className="ceremony-rank-badge gold-badge">🥇 1ST PLACE · STAR PERFORMER</div>
                           <div className="ceremony-award-name gold-text">{awardTitles.first}</div>
                           <div className="ceremony-avatar-wrap gold-border">
-                            {adminVotingResults.top3Winners[0].photoUrl ? (
-                              <img src={adminVotingResults.top3Winners[0].photoUrl} alt={adminVotingResults.top3Winners[0].name} />
-                            ) : (
-                              <div className="ceremony-initials gold-bg">{adminVotingResults.top3Winners[0].name.slice(0, 2).toUpperCase()}</div>
-                            )}
+                            <PerformerAvatar
+                              src={adminVotingResults.top3Winners[0].photoUrl}
+                              name={adminVotingResults.top3Winners[0].name}
+                              style={{ width: '100%', height: '100%', borderRadius: 0, border: 'none' }}
+                            />
                           </div>
                           <h2 className="ceremony-artist-name gold-artist">{adminVotingResults.top3Winners[0].name}</h2>
                           <div className="ceremony-artist-cat">{adminVotingResults.top3Winners[0].category}</div>
@@ -3189,11 +3334,11 @@ export default function App() {
                           <div className="ceremony-rank-badge">🥉 3RD PLACE</div>
                           <div className="ceremony-award-name">{awardTitles.third}</div>
                           <div className="ceremony-avatar-wrap">
-                            {adminVotingResults.top3Winners[2].photoUrl ? (
-                              <img src={adminVotingResults.top3Winners[2].photoUrl} alt={adminVotingResults.top3Winners[2].name} />
-                            ) : (
-                              <div className="ceremony-initials">{adminVotingResults.top3Winners[2].name.slice(0, 2).toUpperCase()}</div>
-                            )}
+                            <PerformerAvatar
+                              src={adminVotingResults.top3Winners[2].photoUrl}
+                              name={adminVotingResults.top3Winners[2].name}
+                              style={{ width: '100%', height: '100%', borderRadius: 0, border: 'none' }}
+                            />
                           </div>
                           <h3 className="ceremony-artist-name">{adminVotingResults.top3Winners[2].name}</h3>
                           <div className="ceremony-artist-cat">{adminVotingResults.top3Winners[2].category}</div>
